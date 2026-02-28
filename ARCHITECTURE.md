@@ -18,10 +18,13 @@ This document describes the high-level architecture of `cdd-docs-ui`, a CLI tool
 The application is built in TypeScript and consists of the following primary modules:
 
 ### 1. CLI Core (`src/cli-core.ts`)
+
 Uses `commander` to parse command-line arguments. It acts as the entry point, collecting the input specification path, output directory path, and default snippet formatting options (`--no-imports`, `--no-wrapping`), before passing control to the Generator.
 
 ### 2. Generator (`src/generator.ts`)
+
 The orchestrator of the SSG process.
+
 - **Parsing:** Reads the OpenAPI `spec.json`.
 - **Navigation Construction:** Parses the `paths` object in the OpenAPI spec to build a structured navigation tree (methods, paths, summaries).
 - **Data Aggregation:** Calls the `runner` to execute the external CDD tools and collect code examples.
@@ -29,26 +32,31 @@ The orchestrator of the SSG process.
 - **Asset Emission:** Writes the static CSS (`styles.css`) and the aggregated `examples.json` file to the output directory.
 
 ### 3. Runner (`src/runner.ts`)
+
 Responsible for interacting with the operating system and external processes.
+
 - **Process Execution:** Uses `child_process.exec` to run commands like `cdd_python_client to_docs_json -i spec.json`.
 - **Variant Generation:** For every language, it executes the CDD tool four times to generate all possible permutations of snippet formatting:
-  1. Default (Full code)
-  2. `--no-imports`
-  3. `--no-wrapping`
-  4. `--no-imports` and `--no-wrapping`
+    1. Default (Full code)
+    2. `--no-imports`
+    3. `--no-wrapping`
+    4. `--no-imports` and `--no-wrapping`
 - **Fallback Mocking:** If an external CDD tool is not installed or fails, the runner gracefully degrades by generating mock text (e.g., `FAILED CLI COMMAND cdd_go (variant: noImports)`). This ensures the documentation UI can still be generated and tested even if the underlying code generators are broken.
 
 ### 4. Templating (`src/templates/layout.ejs`)
+
 The single HTML template defining the structure of the documentation.
+
 - **Layout:** Implements a responsive, two-column layout (sidebar navigation and main content area) inspired by Material Design 3.
 - **Static Content:** Loops through the OpenAPI paths to render endpoint descriptions, parameters, request bodies, and responses directly into HTML.
 - **Interactive Logic:** Contains a vanilla `<script>` block that:
-  - Fetches `/examples.json` on load.
-  - Intercepts dropdown (`<select>`) and checkbox (`<input type="checkbox">`) changes.
-  - Updates the browser URL (`window.history.pushState`) when the language changes.
-  - Mutates the DOM (`<code>` tags) with the appropriate code snippet based on the selected language and formatting variants.
+    - Fetches `/examples.json` on load.
+    - Intercepts dropdown (`<select>`) and checkbox (`<input type="checkbox">`) changes.
+    - Updates the browser URL (`window.history.pushState`) when the language changes.
+    - Mutates the DOM (`<code>` tags) with the appropriate code snippet based on the selected language and formatting variants.
 
 ### 5. Types (`src/types.ts`)
+
 Enforces strict TypeScript interfaces for all internal structures, including CLI options, OpenAPI Schema shapes (`OpenAPISpec`, `OpenAPIEndpoint`), and the expected output structures from the CDD tools (`AllExamples`, `CDDOutput`).
 
 ## Data Flow

@@ -11,23 +11,23 @@ import type { CLIOptions, OpenAPISpec, VariantName } from './types';
  * Interface representing an item in the sidebar navigation.
  */
 export interface NavItem {
-  /** The URL path for the API endpoint. */
-  path: string;
-  /** The HTTP method used for the endpoint. */
-  method: string;
-  /** A brief summary of the endpoint's purpose. */
-  summary: string;
-  /** Tags grouping the endpoint. */
-  tags: string[];
+    /** The URL path for the API endpoint. */
+    path: string;
+    /** The HTTP method used for the endpoint. */
+    method: string;
+    /** A brief summary of the endpoint's purpose. */
+    summary: string;
+    /** Tags grouping the endpoint. */
+    tags: string[];
 }
 
 /**
  * Provides static CSS for the rendered site.
- * 
+ *
  * @returns {string} The raw CSS string.
  */
 export function getStyles(): string {
-  return `
+    return `
 :root {
   --md-sys-color-primary: #6750A4;
   --md-sys-color-on-primary: #FFFFFF;
@@ -330,106 +330,111 @@ pre {
 }
 
 /**
- * Main generator sequence orchestrating reading the OpenAPI specification, 
+ * Main generator sequence orchestrating reading the OpenAPI specification,
  * parsing endpoints, running the CDD CLI tools to get snippets, and rendering ejs.
- * 
+ *
  * @param options - Application CLI settings dictating inputs, outputs, and format flags.
  * @returns A Promise confirming site construction.
  */
 export async function generateSite(options: CLIOptions): Promise<void> {
-  const { inputPath, outputPath, noImports, noWrapping } = options;
-  const specPath = path.resolve(inputPath);
-  const outDir = path.resolve(outputPath);
+    const { inputPath, outputPath, noImports, noWrapping } = options;
+    const specPath = path.resolve(inputPath);
+    const outDir = path.resolve(outputPath);
 
-  const exists = await fs.pathExists(specPath);
-  if (!exists) {
-    throw new Error(`OpenAPI spec not found at: ${specPath}`);
-  }
-
-  const specContent = await fs.readJson(specPath);
-  const spec = specContent as OpenAPISpec;
-  
-  let apiName = 'api';
-  if (spec.info?.title) {
-    apiName = spec.info.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-  }
-  if (apiName === 'swagger-petstore') {
-    apiName = 'petstore';
-  }
-
-  // Determine initial selected variant based on user CLI options for static build output.
-  let initialVariant: VariantName = 'default';
-  if (noImports && noWrapping) {
-    initialVariant = 'noImportsNoWrapping';
-  } else if (noImports) {
-    initialVariant = 'noImports';
-  } else if (noWrapping) {
-    initialVariant = 'noWrapping';
-  }
-
-  const allExamples = await collectAllExamples(specPath);
-
-  const navigation: NavItem[] = [];
-  if (spec.paths) {
-    for (const [routePath, methods] of Object.entries(spec.paths)) {
-      for (const [method, details] of Object.entries(methods)) {
-        if (!['get', 'post', 'put', 'delete', 'patch'].includes(method.toLowerCase())) {
-          continue;
-        }
-        navigation.push({
-          path: routePath,
-          method: method.toLowerCase(),
-          summary: details.summary ?? routePath,
-          tags: details.tags ?? ['default']
-        });
-      }
+    const exists = await fs.pathExists(specPath);
+    if (!exists) {
+        throw new Error(`OpenAPI spec not found at: ${specPath}`);
     }
-  }
 
-  const layoutPath = path.join(__dirname, 'templates', 'layout.ejs');
-  const layoutEjs = await fs.readFile(layoutPath, 'utf-8');
-  
-  const langs = Object.keys(LANGUAGES);
-  
-  await fs.emptyDir(outDir);
+    const specContent = await fs.readJson(specPath);
+    const spec = specContent as OpenAPISpec;
 
-  for (const lang of langs) {
-    console.log(`Building pages for ${lang}...`);
-    
-    // Provide a fallback empty state if specific language generation failed silently elsewhere.
-    const emptyLangExamples = { default: { endpoints: {} }, noImports: { endpoints: {} }, noWrapping: { endpoints: {} }, noImportsNoWrapping: { endpoints: {} } };
-    const examplesRef = allExamples[lang] || emptyLangExamples;
+    let apiName = 'api';
+    if (spec.info?.title) {
+        apiName = spec.info.title.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    }
+    if (apiName === 'swagger-petstore') {
+        apiName = 'petstore';
+    }
 
-    const context = {
-      spec,
-      apiName,
-      currentLang: lang,
-      languages: langs,
-      navigation,
-      examples: examplesRef,
-      initialVariant,
-      noImportsChecked: !!noImports,
-      noWrappingChecked: !!noWrapping
-    };
+    // Determine initial selected variant based on user CLI options for static build output.
+    let initialVariant: VariantName = 'default';
+    if (noImports && noWrapping) {
+        initialVariant = 'noImportsNoWrapping';
+    } else if (noImports) {
+        initialVariant = 'noImports';
+    } else if (noWrapping) {
+        initialVariant = 'noWrapping';
+    }
 
-    const html = await ejs.render(layoutEjs, context, { root: path.join(__dirname, 'templates'), async: true });
-    
-    const pageDir = path.join(outDir, 'api', apiName, lang);
-    await fs.ensureDir(pageDir);
-    await fs.writeFile(path.join(pageDir, 'index.html'), html);
-  }
+    const allExamples = await collectAllExamples(specPath);
 
-  const examplesJsonPath = path.join(outDir, 'examples.json');
-  await fs.writeJson(examplesJsonPath, allExamples);
+    const navigation: NavItem[] = [];
+    if (spec.paths) {
+        for (const [routePath, methods] of Object.entries(spec.paths)) {
+            for (const [method, details] of Object.entries(methods)) {
+                if (!['get', 'post', 'put', 'delete', 'patch'].includes(method.toLowerCase())) {
+                    continue;
+                }
+                navigation.push({
+                    path: routePath,
+                    method: method.toLowerCase(),
+                    summary: details.summary ?? routePath,
+                    tags: details.tags ?? ['default'],
+                });
+            }
+        }
+    }
 
-  const defaultLang = 'python';
-  const redirectHtml = `<meta http-equiv="refresh" content="0; url=/api/${apiName}/${defaultLang}/" />`;
-  await fs.writeFile(path.join(outDir, 'index.html'), redirectHtml);
-  
-  const apiDir = path.join(outDir, 'api', apiName);
-  await fs.ensureDir(apiDir);
-  await fs.writeFile(path.join(apiDir, 'index.html'), redirectHtml);
+    const layoutPath = path.join(__dirname, 'templates', 'layout.ejs');
+    const layoutEjs = await fs.readFile(layoutPath, 'utf-8');
 
-  const cssPath = path.join(outDir, 'styles.css');
-  await fs.writeFile(cssPath, getStyles());
+    const langs = Object.keys(LANGUAGES);
+
+    await fs.emptyDir(outDir);
+
+    for (const lang of langs) {
+        console.log(`Building pages for ${lang}...`);
+
+        // Provide a fallback empty state if specific language generation failed silently elsewhere.
+        const emptyLangExamples = {
+            default: { endpoints: {} },
+            noImports: { endpoints: {} },
+            noWrapping: { endpoints: {} },
+            noImportsNoWrapping: { endpoints: {} },
+        };
+        const examplesRef = allExamples[lang] || emptyLangExamples;
+
+        const context = {
+            spec,
+            apiName,
+            currentLang: lang,
+            languages: langs,
+            navigation,
+            examples: examplesRef,
+            initialVariant,
+            noImportsChecked: !!noImports,
+            noWrappingChecked: !!noWrapping,
+        };
+
+        const html = await ejs.render(layoutEjs, context, { root: path.join(__dirname, 'templates'), async: true });
+
+        const pageDir = path.join(outDir, 'api', apiName, lang);
+        await fs.ensureDir(pageDir);
+        await fs.writeFile(path.join(pageDir, 'index.html'), html);
+    }
+
+    const examplesJsonPath = path.join(outDir, 'examples.json');
+    await fs.writeJson(examplesJsonPath, allExamples);
+
+    const defaultLang = 'python';
+    const redirectHtml = `<meta http-equiv="refresh" content="0; url=/api/${apiName}/${defaultLang}/" />`;
+    await fs.writeFile(path.join(outDir, 'index.html'), redirectHtml);
+
+    const apiDir = path.join(outDir, 'api', apiName);
+    await fs.ensureDir(apiDir);
+    await fs.writeFile(path.join(apiDir, 'index.html'), redirectHtml);
+
+    const cssPath = path.join(outDir, 'styles.css');
+    await fs.writeFile(cssPath, getStyles());
 }

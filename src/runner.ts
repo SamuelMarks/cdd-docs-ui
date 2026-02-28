@@ -13,14 +13,14 @@ const execPromise = util.promisify(exec);
  * Mapping of supported programming languages to their respective CDD CLI tool names.
  */
 export const LANGUAGES: Record<string, string> = {
-  python: 'cdd_python_client',
-  go: 'cdd_go',
-  csharp: 'cdd_csharp',
-  c: 'cdd_c',
-  kotlin: 'cdd_kotlin',
-  swift: 'cdd_swift',
-  sh: 'cdd_sh',
-  web: 'cdd_web_ng'
+    python: 'cdd_python_client',
+    go: 'cdd_go',
+    csharp: 'cdd_csharp',
+    c: 'cdd_c',
+    kotlin: 'cdd_kotlin',
+    swift: 'cdd_swift',
+    sh: 'cdd_sh',
+    web: 'cdd_web_ng',
 };
 
 /**
@@ -32,20 +32,20 @@ export const LANGUAGES: Record<string, string> = {
  * @returns A Promise resolving to a mocked CDDOutput structure.
  */
 export async function generateMockExamples(inputPath: string, lang: string, variant: VariantName): Promise<CDDOutput> {
-  const specContent = await fs.readJson(inputPath);
-  const spec = specContent as OpenAPISpec;
-  const examples: CDDOutput = { endpoints: {} };
-  
-  if (spec.paths) {
-    for (const [path, methods] of Object.entries(spec.paths)) {
-      const endpointRecord: Record<string, string> = {};
-      for (const method of Object.keys(methods)) {
-        endpointRecord[method] = `FAILED CLI COMMAND cdd_${lang} (variant: ${variant})`;
-      }
-      examples.endpoints[path] = endpointRecord;
+    const specContent = await fs.readJson(inputPath);
+    const spec = specContent as OpenAPISpec;
+    const examples: CDDOutput = { endpoints: {} };
+
+    if (spec.paths) {
+        for (const [path, methods] of Object.entries(spec.paths)) {
+            const endpointRecord: Record<string, string> = {};
+            for (const method of Object.keys(methods)) {
+                endpointRecord[method] = `FAILED CLI COMMAND cdd_${lang} (variant: ${variant})`;
+            }
+            examples.endpoints[path] = endpointRecord;
+        }
     }
-  }
-  return examples;
+    return examples;
 }
 
 /**
@@ -59,28 +59,30 @@ export async function generateMockExamples(inputPath: string, lang: string, vari
  * @returns A Promise resolving to the parsed CDDOutput. Fallbacks to mocked output on error.
  */
 export async function getCodeExamplesForLanguage(
-  lang: string,
-  cmd: string,
-  inputPath: string,
-  options: Partial<CLIOptions>,
-  variant: VariantName
+    lang: string,
+    cmd: string,
+    inputPath: string,
+    options: Partial<CLIOptions>,
+    variant: VariantName,
 ): Promise<CDDOutput> {
-  let command = `${cmd} to_docs_json -i ${inputPath}`;
-  if (options.noImports) {
-    command += ' --no-imports';
-  }
-  if (options.noWrapping) {
-    command += ' --no-wrapping';
-  }
+    let command = `${cmd} to_docs_json -i ${inputPath}`;
+    if (options.noImports) {
+        command += ' --no-imports';
+    }
+    if (options.noWrapping) {
+        command += ' --no-wrapping';
+    }
 
-  try {
-    const { stdout } = await execPromise(command);
-    return JSON.parse(stdout) as CDDOutput;
-  } catch (e) {
-    const error = e instanceof Error ? e : new Error(String(e));
-    console.warn(`[WARN] Failed to run ${cmd} or parse output for variant ${variant}: ${error.message}. Generating mock data for ${lang}.`);
-    return generateMockExamples(inputPath, lang, variant);
-  }
+    try {
+        const { stdout } = await execPromise(command);
+        return JSON.parse(stdout) as CDDOutput;
+    } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        console.warn(
+            `[WARN] Failed to run ${cmd} or parse output for variant ${variant}: ${error.message}. Generating mock data for ${lang}.`,
+        );
+        return generateMockExamples(inputPath, lang, variant);
+    }
 }
 
 /**
@@ -90,15 +92,21 @@ export async function getCodeExamplesForLanguage(
  * @returns A Promise resolving to a map of language names to their 4 CDDOutput variants.
  */
 export async function collectAllExamples(inputPath: string): Promise<AllExamples> {
-  const results: AllExamples = {};
-  for (const [lang, cmd] of Object.entries(LANGUAGES)) {
-    console.log(`Generating code examples for ${lang}...`);
-    results[lang] = {
-      default: await getCodeExamplesForLanguage(lang, cmd, inputPath, {}, 'default'),
-      noImports: await getCodeExamplesForLanguage(lang, cmd, inputPath, { noImports: true }, 'noImports'),
-      noWrapping: await getCodeExamplesForLanguage(lang, cmd, inputPath, { noWrapping: true }, 'noWrapping'),
-      noImportsNoWrapping: await getCodeExamplesForLanguage(lang, cmd, inputPath, { noImports: true, noWrapping: true }, 'noImportsNoWrapping')
-    };
-  }
-  return results;
+    const results: AllExamples = {};
+    for (const [lang, cmd] of Object.entries(LANGUAGES)) {
+        console.log(`Generating code examples for ${lang}...`);
+        results[lang] = {
+            default: await getCodeExamplesForLanguage(lang, cmd, inputPath, {}, 'default'),
+            noImports: await getCodeExamplesForLanguage(lang, cmd, inputPath, { noImports: true }, 'noImports'),
+            noWrapping: await getCodeExamplesForLanguage(lang, cmd, inputPath, { noWrapping: true }, 'noWrapping'),
+            noImportsNoWrapping: await getCodeExamplesForLanguage(
+                lang,
+                cmd,
+                inputPath,
+                { noImports: true, noWrapping: true },
+                'noImportsNoWrapping',
+            ),
+        };
+    }
+    return results;
 }

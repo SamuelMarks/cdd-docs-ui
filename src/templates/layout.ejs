@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title><%= spec.info?.title || 'API Docs' %> - <%= currentLang.toUpperCase() %></title>
+  <link rel="stylesheet" href="/styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <script>
+    function changeLanguageFallback(lang) {
+      window.location.href = '/api/<%= apiName %>/' + lang + '/';
+    }
+  </script>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h1><%= spec.info?.title || 'API Reference' %></h1>
+      <% if (spec.info?.version) { %>
+        <span style="font-size: 0.8rem; color: var(--md-sys-color-on-surface-variant)"><%= spec.info.version %></span>
+      <% } %>
+    </div>
+    <ul class="nav-list">
+      <% navigation.forEach(function(nav) { %>
+        <li class="nav-item">
+          <a href="#<%= nav.method %>-<%= nav.path.replace(/[^a-zA-Z0-9]/g, '') %>" class="nav-link">
+            <span class="method-badge method-<%= nav.method %>"><%= nav.method %></span>
+            <span class="path-text"><%= nav.path %></span>
+          </a>
+        </li>
+      <% }); %>
+    </ul>
+  </aside>
+
+  <main class="main-content">
+    <div class="doc-area">
+      <% if (spec.info?.description) { %>
+        <p style="margin-bottom: 32px;"><%= spec.info.description %></p>
+      <% } %>
+
+      <% Object.entries(spec.paths || {}).forEach(([routePath, methods]) => { %>
+        <% Object.entries(methods).forEach(([method, details]) => { %>
+          <% if (!['get', 'post', 'put', 'delete', 'patch'].includes(method.toLowerCase())) return; %>
+          
+          <section id="<%= method.toLowerCase() %>-<%= routePath.replace(/[^a-zA-Z0-9]/g, '') %>" class="endpoint-section">
+            <div class="endpoint-header">
+              <span class="method-badge method-<%= method.toLowerCase() %>" style="font-size: 0.9rem;"><%= method.toUpperCase() %></span>
+              <span class="endpoint-path"><%= routePath %></span>
+            </div>
+            <h2 class="endpoint-title"><%= details.summary || 'No Summary' %></h2>
+            <p class="endpoint-desc"><%= details.description || '' %></p>
+
+            <% if (details.parameters && details.parameters.length > 0) { %>
+              <h3>Parameters</h3>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>In</th>
+                    <th>Type/Schema</th>
+                    <th>Required</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <% details.parameters.forEach(param => { %>
+                    <tr>
+                      <td><strong><%= param.name %></strong></td>
+                      <td><%= param.in %></td>
+                      <td><code><%= param.schema?.type || param.type || 'any' %></code></td>
+                      <td><%= param.required ? 'Yes' : 'No' %></td>
+                      <td><%= param.description || '' %></td>
+                    </tr>
+                  <% }); %>
+                </tbody>
+              </table>
+            <% } %>
+
+            <% if (details.requestBody) { %>
+              <div style="margin-top: 24px;">
+                <h3>Request Body</h3>
+                <p><%= details.requestBody.description || '' %></p>
+              </div>
+            <% } %>
+
+            <% if (details.responses) { %>
+              <div style="margin-top: 24px;">
+                <h3>Responses</h3>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Status</th>
+                      <th>Description</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <% Object.entries(details.responses).forEach(([status, resp]) => { %>
+                      <tr>
+                        <td><strong><%= status %></strong></td>
+                        <td><%= resp.description || '' %></td>
+                      </tr>
+                    <% }); %>
+                  </tbody>
+                </table>
+              </div>
+            <% } %>
+          </section>
+        <% }); %>
+      <% }); %>
+    </div>
+
+    <div class="code-panel">
+      <div class="lang-selector">
+        <label for="language-select">Language:</label>
+        <select id="language-select" class="lang-select">
+          <% languages.forEach(function(l) { %>
+            <option value="<%= l %>" <%= currentLang === l ? 'selected' : '' %>>
+              <%= l.charAt(0).toUpperCase() + l.slice(1) %>
+            </option>
+          <% }); %>
+        </select>
+      </div>
+      <div class="lang-options">
+        <label>
+          <input type="checkbox" id="opt-no-imports" <%= noImportsChecked ? 'checked' : '' %>>
+          No Imports
+        </label>
+        <label>
+          <input type="checkbox" id="opt-no-wrapping" <%= noWrappingChecked ? 'checked' : '' %>>
+          No Wrapping
+        </label>
+      </div>
+      <div class="code-snippets">
+        <% Object.entries(spec.paths || {}).forEach(([routePath, methods]) => { %>
+          <% Object.entries(methods).forEach(([method, details]) => { %>
+            <% if (!['get', 'post', 'put', 'delete', 'patch'].includes(method.toLowerCase())) return; %>
+            
+            <div class="code-block-wrapper" id="code-<%= method.toLowerCase() %>-<%= routePath.replace(/[^a-zA-Z0-9]/g, '') %>" data-method="<%= method.toLowerCase() %>" data-path="<%= routePath %>">
+              <div class="code-block-header">Example <%= currentLang %> Request (<%= method.toUpperCase() %> <%= routePath %>)</div>
+              <pre><code><%= examples[initialVariant]?.endpoints[routePath]?.[method.toLowerCase()] || '// Code example not generated for ' + method.toUpperCase() + ' ' + routePath %></code></pre>
+            </div>
+            
+          <% }); %>
+        <% }); %>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const select = document.getElementById('language-select');
+      const optNoImports = document.getElementById('opt-no-imports');
+      const optNoWrapping = document.getElementById('opt-no-wrapping');
+      
+      if (!select) return;
+
+      // Progressive enhancement: load JSON to swap languages without page reload
+      let examplesData = null;
+      fetch('/examples.json')
+        .then(res => res.json())
+        .then(data => { examplesData = data; })
+        .catch(err => console.error('Failed to load examples JSON', err));
+
+      function getActiveVariant() {
+        const noImp = optNoImports.checked;
+        const noWrap = optNoWrapping.checked;
+        if (noImp && noWrap) return 'noImportsNoWrapping';
+        if (noImp) return 'noImports';
+        if (noWrap) return 'noWrapping';
+        return 'default';
+      }
+
+      function updateCodeBlocks() {
+        const newLang = select.value;
+        const variant = getActiveVariant();
+        if (!examplesData) return; // if JSON hasn't loaded or failed, do nothing on checkbox change
+        
+        const codeBlocks = document.querySelectorAll('.code-block-wrapper');
+        codeBlocks.forEach(block => {
+          const method = block.getAttribute('data-method');
+          const path = block.getAttribute('data-path');
+          const codeEl = block.querySelector('code');
+          const headerEl = block.querySelector('.code-block-header');
+
+          if (method && path && codeEl && headerEl) {
+            headerEl.textContent = 'Example ' + newLang + ' Request (' + method.toUpperCase() + ' ' + path + ')';
+            
+            const langData = examplesData[newLang];
+            const variantData = langData ? langData[variant] : null;
+            const endpoints = variantData ? variantData.endpoints : {};
+            const routeData = endpoints[path];
+            const newCode = routeData && routeData[method] 
+              ? routeData[method] 
+              : ('// Code example not generated for ' + method.toUpperCase() + ' ' + path);
+            
+            codeEl.textContent = newCode;
+          }
+        });
+      }
+
+      select.addEventListener('change', (e) => {
+        const newLang = e.target.value;
+        
+        // Fallback if JSON failed to load dynamically
+        if (!examplesData) {
+          changeLanguageFallback(newLang);
+          return;
+        }
+
+        // Update URL and Title
+        const newUrl = '/api/<%= apiName %>/' + newLang + '/';
+        window.history.pushState({ lang: newLang }, '', newUrl);
+        document.title = document.title.replace(/- [A-Z]+$/, '- ' + newLang.toUpperCase());
+
+        updateCodeBlocks();
+      });
+
+      if (optNoImports) optNoImports.addEventListener('change', updateCodeBlocks);
+      if (optNoWrapping) optNoWrapping.addEventListener('change', updateCodeBlocks);
+
+      // Handle browser back/forward correctly
+      window.addEventListener('popstate', () => {
+         window.location.reload();
+      });
+    });
+
+    // Sync scroll positions between doc area and code area
+    const docArea = document.querySelector('.doc-area');
+    const sections = document.querySelectorAll('.endpoint-section');
+    
+    docArea.addEventListener('scroll', () => {
+      let currentSection = null;
+      for (const section of sections) {
+        const rect = section.getBoundingClientRect();
+        if (rect.top >= 0 && rect.top < window.innerHeight / 2) {
+          currentSection = section;
+          break;
+        }
+      }
+      
+      if (currentSection) {
+        const codeBlockId = 'code-' + currentSection.id;
+        const targetCodeBlock = document.getElementById(codeBlockId);
+        if (targetCodeBlock) {
+          targetCodeBlock.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    });
+  </script>
+</body>
+</html>

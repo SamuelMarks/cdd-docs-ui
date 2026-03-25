@@ -77,16 +77,23 @@ The `package.json` includes several scripts to streamline development.
 
 ## Working with CDD Tools
 
-The `runner.ts` module attempts to execute the following commands on your system:
+The `runner.ts` module attempts to execute the `to_docs_json` command on your system for 13 different languages via the unified `./cdd-ctl` binary.
 
-- `cdd_python_client to_docs_json -i <path>`
-- `cdd_go to_docs_json -i <path>`
-- `cdd_csharp to_docs_json -i <path>`
-- `cdd_c to_docs_json -i <path>`
-- `cdd_kotlin to_docs_json -i <path>`
-- `cdd_swift to_docs_json -i <path>`
-- `cdd_sh to_docs_json -i <path>`
-- `cdd_web_ng to_docs_json -i <path>`
+For example:
+
+- `./cdd-ctl c to_docs_json -i <path>`
+- `./cdd-ctl cpp to_docs_json -i <path>`
+- `./cdd-ctl csharp to_docs_json -i <path>`
+- `./cdd-ctl go to_docs_json -i <path>`
+- `./cdd-ctl java to_docs_json -i <path>`
+- `./cdd-ctl kotlin to_docs_json -i <path>`
+- `./cdd-ctl php to_docs_json -i <path>`
+- `./cdd-ctl python-all to_docs_json -i <path>`
+- `./cdd-ctl ruby to_docs_json -i <path>`
+- `./cdd-ctl rust to_docs_json -i <path>`
+- `./cdd-ctl sh to_docs_json -i <path>`
+- `./cdd-ctl swift to_docs_json -i <path>`
+- `./cdd-ctl ts to_docs_json -i <path>`
 
 For every language, it runs four permutations to support checkboxes in the UI:
 
@@ -95,8 +102,8 @@ For every language, it runs four permutations to support checkboxes in the UI:
 3. `--no-wrapping`
 4. `--no-imports --no-wrapping`
 
-**If you do not have these tools installed globally**, the runner will catch the `Command failed` errors, log a `[WARN]`, and automatically generate mock text like:
-`FAILED CLI COMMAND cdd_python (variant: noImports)`
+**If you do not have this tool installed globally**, the runner will catch the `Command failed` errors, log a `[WARN]`, and automatically generate mock text like:
+`FAILED CLI COMMAND ./cdd-ctl python-all (variant: noImports)`
 
 This graceful degradation ensures you can still test the UI layout, JavaScript interactivity, and templating engine without needing a massive toolchain installed locally.
 

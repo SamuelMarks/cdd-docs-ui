@@ -13,14 +13,19 @@ const execPromise = util.promisify(exec);
  * Mapping of supported programming languages to their respective CDD CLI tool names.
  */
 export const LANGUAGES: Record<string, string> = {
-    python: 'python_client',
-    go: 'go',
-    csharp: 'csharp',
     c: 'c',
+    cpp: 'cpp',
+    csharp: 'csharp',
+    go: 'go',
+    java: 'java',
     kotlin: 'kotlin',
-    swift: 'swift',
+    php: 'php',
+    python: 'python-all',
+    ruby: 'ruby',
+    rust: 'rust',
     sh: 'sh',
-    web: 'web_ng',
+    swift: 'swift',
+    ts: 'ts',
 };
 
 /**

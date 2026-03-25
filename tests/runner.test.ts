@@ -19,12 +19,12 @@ describe('runner', () => {
             };
             (fs.readJson as jest.Mock).mockResolvedValue(mockSpec);
 
-            const result = await generateMockExamples('dummy.json', 'python', 'noImports');
+            const result = await generateMockExamples('dummy.json', 'python-all', 'noImports');
             expect(result.endpoints).toHaveProperty('/test');
             expect(result.endpoints['/test']).toHaveProperty('get');
             expect(result.endpoints['/test']).toHaveProperty('post');
             expect(result.endpoints['/test']!['get']).toEqual(
-                'FAILED CLI COMMAND ./cdd-ctl python (variant: noImports)',
+                'FAILED CLI COMMAND ./cdd-ctl python-all (variant: noImports)',
             );
         });
 
@@ -43,15 +43,15 @@ describe('runner', () => {
             });
 
             const result = await getCodeExamplesForLanguage(
-                'python',
-                'cdd_python_client',
+                'python-all',
+                'python-all',
                 'dummy.json',
                 { noImports: true, noWrapping: true },
                 'noImportsNoWrapping',
             );
             expect(result).toEqual(mockOutput);
             expect(cp.exec).toHaveBeenCalledWith(
-                expect.stringContaining('cdd_python_client to_docs_json -i dummy.json --no-imports --no-wrapping'),
+                expect.stringContaining('python-all to_docs_json -i dummy.json --no-imports --no-wrapping'),
                 expect.any(Function),
             );
         });
@@ -65,7 +65,7 @@ describe('runner', () => {
             // Catch console.warn to suppress output
             const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-            const result = await getCodeExamplesForLanguage('python', 'cdd_python_client', 'dummy.json', {}, 'default');
+            const result = await getCodeExamplesForLanguage('python-all', 'python-all', 'dummy.json', {}, 'default');
             expect(result.endpoints).toEqual({});
             expect(warnSpy).toHaveBeenCalled();
 
@@ -79,7 +79,7 @@ describe('runner', () => {
             (fs.readJson as jest.Mock).mockResolvedValue({});
             const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-            const result = await getCodeExamplesForLanguage('python', 'cdd_python_client', 'dummy.json', {}, 'default');
+            const result = await getCodeExamplesForLanguage('python-all', 'python-all', 'dummy.json', {}, 'default');
             expect(result.endpoints).toEqual({});
             expect(warnSpy).toHaveBeenCalled();
             warnSpy.mockRestore();

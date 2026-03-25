@@ -48,18 +48,23 @@ _Note: The generator still runs all 4 CDD tools variants in the background to bu
 
 ## Supported Toolchain Repositories
 
-This CLI integrates by shelling out to the following `cdd` (Code Duplication Detection / Code Generation) generators:
+This CLI integrates by shelling out to `cdd-ctl` which supports the following 13 `cdd` targets:
 
-- [cdd-python-client](https://github.com/offscale/cdd-python-client) (`cdd_python_client`)
-- [cdd-go](https://github.com/SamuelMarks/cdd-go) (`cdd_go`)
-- [cdd-csharp](https://github.com/SamuelMarks/cdd-csharp) (`cdd_csharp`)
-- [cdd-c](https://github.com/SamuelMarks/cdd-c) (`cdd_c`)
-- [cdd-kotlin](https://github.com/offscale/cdd-kotlin) (`cdd_kotlin`)
-- [cdd-swift](https://github.com/offscale/cdd-swift) (`cdd_swift`)
-- [cdd-sh](https://github.com/SamuelMarks/cdd-sh) (`cdd_sh`)
-- [cdd-web-ng](https://github.com/offscale/cdd-web-ng) (`cdd_web_ng`)
+- [cdd-c](https://github.com/SamuelMarks/cdd-c) (`c`)
+- [cdd-cpp](https://github.com/SamuelMarks/cdd-cpp) (`cpp`)
+- [cdd-csharp](https://github.com/SamuelMarks/cdd-csharp) (`csharp`)
+- [cdd-go](https://github.com/SamuelMarks/cdd-go) (`go`)
+- [cdd-java](https://github.com/SamuelMarks/cdd-java) (`java`)
+- [cdd-kotlin](https://github.com/offscale/cdd-kotlin) (`kotlin`)
+- [cdd-php](https://github.com/SamuelMarks/cdd-php) (`php`)
+- [cdd-python-all](https://github.com/offscale/cdd-python-all) (`python-all`)
+- [cdd-ruby](https://github.com/SamuelMarks/cdd-ruby) (`ruby`)
+- [cdd-rust](https://github.com/SamuelMarks/cdd-rust) (`rust`)
+- [cdd-sh](https://github.com/SamuelMarks/cdd-sh) (`sh`)
+- [cdd-swift](https://github.com/SamuelMarks/cdd-swift) (`swift`)
+- [cdd-ts](https://github.com/offscale/cdd-ts) (`ts`)
 
-These must be installed and available in your global PATH for the generator to insert real code snippets. If they are missing, mock fallback data is generated.
+These must be integrated into `cdd-ctl` and the binary must be available in your path or current directory for the generator to insert real code snippets. If they are missing or fail, mock fallback data is generated.
 
 ## Serving the Output
 

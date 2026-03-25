@@ -2,6 +2,21 @@
 
 This document describes the high-level architecture of `cdd-docs-ui`, a CLI tool that parses OpenAPI specifications and generates a purely static, server-side rendered (SSR) API documentation website with progressive enhancement for interactive code examples.
 
+## Architecture Diagram
+
+```mermaid
+graph TD
+    Spec[OpenAPI Spec] --> DocsUI(cdd-docs-ui JS Runner)
+    DocsUI -- child_process.exec --> CddCtl[./cdd-ctl Rust Amalgamation CLI]
+    CddCtl --> Py[Python]
+    CddCtl --> Go[Go]
+    CddCtl --> CSharp[C#]
+    Py -- JSON snippets --> DocsUI
+    Go -- JSON snippets --> DocsUI
+    CSharp -- JSON snippets --> DocsUI
+    DocsUI --> HTML[Static HTML Site]
+```
+
 ## Core Concepts
 
 1. **Static Site Generation (SSG) with Graceful Degradation:**
@@ -10,8 +25,8 @@ This document describes the high-level architecture of `cdd-docs-ui`, a CLI tool
 2. **Progressive Enhancement:**
    For users with JavaScript enabled, the static site hydrates into a single-page application (SPA) experience for the code examples. Changing languages or toggling code snippet formatting (imports/wrapping) dynamically swaps the code content via DOM manipulation using a pre-fetched `examples.json` file, avoiding full page reloads.
 
-3. **External Code Generation via `cdd` Toolchain:**
-   Instead of reinventing code generators, this tool shells out to existing language-specific Code Duplication Detection (CDD) CLI tools (e.g., `cdd_python_client`, `cdd_go`). It passes the OpenAPI spec to these tools and expects JSON payloads containing the generated code examples.
+3. **External Code Generation via `cdd-ctl` Toolchain:**
+   Instead of reinventing code generators, this tool shells out to the existing `cdd-ctl` Rust CLI tool. It passes the OpenAPI spec to this amalgamation tool and expects JSON payloads containing the generated code examples for a requested target language.
 
 ## Component Breakdown
 
@@ -35,13 +50,13 @@ The orchestrator of the SSG process.
 
 Responsible for interacting with the operating system and external processes.
 
-- **Process Execution:** Uses `child_process.exec` to run commands like `cdd_python_client to_docs_json -i spec.json`.
+- **Process Execution:** Uses `child_process.exec` to run commands like `./cdd-ctl python_client to_docs_json -i spec.json`.
 - **Variant Generation:** For every language, it executes the CDD tool four times to generate all possible permutations of snippet formatting:
     1. Default (Full code)
     2. `--no-imports`
     3. `--no-wrapping`
     4. `--no-imports` and `--no-wrapping`
-- **Fallback Mocking:** If an external CDD tool is not installed or fails, the runner gracefully degrades by generating mock text (e.g., `FAILED CLI COMMAND cdd_go (variant: noImports)`). This ensures the documentation UI can still be generated and tested even if the underlying code generators are broken.
+- **Fallback Mocking:** If the `cdd-ctl` tool is not installed or fails, the runner gracefully degrades by generating mock text (e.g., `FAILED CLI COMMAND ./cdd-ctl go (variant: noImports)`). This ensures the documentation UI can still be generated and tested even if the underlying code generator is broken.
 
 ### 4. Templating (`src/templates/layout.ejs`)
 
@@ -64,7 +79,7 @@ Enforces strict TypeScript interfaces for all internal structures, including CLI
 1. User executes `cdd-docs-ui -i spec.json -o build/`.
 2. `cli-core.ts` parses the arguments.
 3. `generator.ts` reads `spec.json`.
-4. `runner.ts` executes `cdd_*` tools to generate code examples for all languages and variants.
+4. `runner.ts` executes `./cdd-ctl` tool target commands to generate code examples for all languages and variants.
 5. Code examples are aggregated into an `AllExamples` object in memory.
 6. `generator.ts` writes `AllExamples` to `build/examples.json`.
 7. `generator.ts` renders `layout.ejs` for each language (e.g., Python, Go) using the parsed spec and the `AllExamples` object to populate the initial HTML state.

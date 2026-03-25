@@ -13,14 +13,14 @@ const execPromise = util.promisify(exec);
  * Mapping of supported programming languages to their respective CDD CLI tool names.
  */
 export const LANGUAGES: Record<string, string> = {
-    python: 'cdd_python_client',
-    go: 'cdd_go',
-    csharp: 'cdd_csharp',
-    c: 'cdd_c',
-    kotlin: 'cdd_kotlin',
-    swift: 'cdd_swift',
-    sh: 'cdd_sh',
-    web: 'cdd_web_ng',
+    python: 'python_client',
+    go: 'go',
+    csharp: 'csharp',
+    c: 'c',
+    kotlin: 'kotlin',
+    swift: 'swift',
+    sh: 'sh',
+    web: 'web_ng',
 };
 
 /**
@@ -40,7 +40,7 @@ export async function generateMockExamples(inputPath: string, lang: string, vari
         for (const [path, methods] of Object.entries(spec.paths)) {
             const endpointRecord: Record<string, string> = {};
             for (const method of Object.keys(methods)) {
-                endpointRecord[method] = `FAILED CLI COMMAND cdd_${lang} (variant: ${variant})`;
+                endpointRecord[method] = `FAILED CLI COMMAND ./cdd-ctl ${lang} (variant: ${variant})`;
             }
             examples.endpoints[path] = endpointRecord;
         }
@@ -65,7 +65,7 @@ export async function getCodeExamplesForLanguage(
     options: Partial<CLIOptions>,
     variant: VariantName,
 ): Promise<CDDOutput> {
-    let command = `${cmd} to_docs_json -i ${inputPath}`;
+    let command = `./cdd-ctl ${cmd} to_docs_json -i ${inputPath}`;
     if (options.noImports) {
         command += ' --no-imports';
     }
@@ -79,7 +79,7 @@ export async function getCodeExamplesForLanguage(
     } catch (e) {
         const error = e instanceof Error ? e : new Error(String(e));
         console.warn(
-            `[WARN] Failed to run ${cmd} or parse output for variant ${variant}: ${error.message}. Generating mock data for ${lang}.`,
+            `[WARN] Failed to run ./cdd-ctl ${cmd} or parse output for variant ${variant}: ${error.message}. Generating mock data for ${lang}.`,
         );
         return generateMockExamples(inputPath, lang, variant);
     }

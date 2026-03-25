@@ -23,7 +23,9 @@ describe('runner', () => {
             expect(result.endpoints).toHaveProperty('/test');
             expect(result.endpoints['/test']).toHaveProperty('get');
             expect(result.endpoints['/test']).toHaveProperty('post');
-            expect(result.endpoints['/test']!['get']).toEqual('FAILED CLI COMMAND cdd_python (variant: noImports)');
+            expect(result.endpoints['/test']!['get']).toEqual(
+                'FAILED CLI COMMAND ./cdd-ctl python (variant: noImports)',
+            );
         });
 
         it('returns empty examples when paths do not exist', async () => {

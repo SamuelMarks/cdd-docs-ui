@@ -4,6 +4,21 @@
 
 A strictly-typed TypeScript CLI tool for generating static, progressively-enhanced API documentation websites based on OpenAPI specifications and code snippets from the `cdd` (Compiler Driven Development) toolchain.
 
+## Architecture Diagram
+
+```mermaid
+graph TD
+    Spec[OpenAPI Spec] --> DocsUI(cdd-docs-ui JS Runner)
+    DocsUI -- child_process.exec --> CddCtl[./cdd-ctl Rust Amalgamation CLI]
+    CddCtl --> Py[Python]
+    CddCtl --> Go[Go]
+    CddCtl --> CSharp[C#]
+    Py -- JSON snippets --> DocsUI
+    Go -- JSON snippets --> DocsUI
+    CSharp -- JSON snippets --> DocsUI
+    DocsUI --> HTML[Static HTML Site]
+```
+
 ## Features
 
 - **100% Test Coverage:** Rigorously tested core logic.
@@ -46,7 +61,7 @@ This repository includes a sample Petstore `spec.json`.
 npm start
 ```
 
-_Note: If you don't have the underlying `cdd\__` binaries installed globally, the tool will gracefully output mocked fallback text for the UI so you can still test the layout and functionality.\*
+\_Note: If you don't have the underlying `cdd\__` binaries installed globally, the tool will gracefully output mocked fallback text for the UI so you can still test the layout and functionality.\*
 
 2. **Serve the Example:**
 

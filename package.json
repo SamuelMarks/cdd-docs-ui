@@ -7,7 +7,7 @@
         "test": "jest --coverage tests/",
         "start": "node dist/bin/cli.js -i example/spec.json -o example/public",
         "serve": "node dist/bin/serve.js",
-        "build": "tsc && mkdir -p dist/src/templates && cp -r src/templates/* dist/src/templates/",
+        "build": "tsc && mkdir -p dist/src/templates && cp -r src/templates/* dist/src/templates/ && esbuild src/client/main.ts --bundle --outfile=dist/bundle.js && cp src/client/index.html dist/index.html && cp src/client/styles.css dist/styles.css",
         "prestart": "npm run build",
         "prepare": "husky"
     },
@@ -29,9 +29,12 @@
         "@types/express": "^5.0.6",
         "@types/fs-extra": "^11.0.4",
         "@types/jest": "^30.0.0",
+        "@types/js-yaml": "^4.0.9",
         "@types/node": "^25.3.2",
+        "esbuild": "^0.27.4",
         "husky": "^9.1.7",
         "jest": "^30.2.0",
+        "js-yaml": "^4.1.1",
         "ts-jest": "^29.4.6",
         "typescript": "^5.9.3"
     }

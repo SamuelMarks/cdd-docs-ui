@@ -24,7 +24,7 @@ describe('runner', () => {
             expect(result.endpoints['/test']).toHaveProperty('get');
             expect(result.endpoints['/test']).toHaveProperty('post');
             expect(result.endpoints['/test']!['get']).toEqual(
-                'FAILED CLI COMMAND ./cdd-ctl python-all (variant: noImports)',
+                'FAILED CLI COMMAND ./cdd-ctl to_docs_json python-all (variant: noImports)',
             );
         });
 
@@ -51,7 +51,7 @@ describe('runner', () => {
             );
             expect(result).toEqual(mockOutput);
             expect(cp.exec).toHaveBeenCalledWith(
-                expect.stringContaining('python-all to_docs_json -i dummy.json --no-imports --no-wrapping'),
+                expect.stringContaining('to_docs_json python-all -i dummy.json --no-imports --no-wrapping'),
                 expect.any(Function),
             );
         });

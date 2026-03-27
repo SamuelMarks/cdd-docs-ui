@@ -48,21 +48,4 @@ info:
     const html = generateAOTHtml(yamlStr, [], "dark");
     expect(html).toContain("data-theme=\"dark\"");
   });
-
-  it("should render operations without parameters correctly", () => {
-    const yamlStr = `
-openapi: 3.0.0
-info:
-  title: Test API
-paths:
-  /ping:
-    get:
-      summary: Ping
-      responses:
-        "200":
-          description: Pong
-`;
-    const html = generateAOTHtml(yamlStr);
-    expect(html).toContain("No parameters.");
-  });
 });

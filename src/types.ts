@@ -1,33 +1,22 @@
 
-export interface Param {
-  name: string;
-  in: string;
-  required: boolean;
-  description?: string;
-  type: string;
-}
+import { OpenAPI320 } from "./openapi-types";
 
-export interface Operation {
-  id: string;
-  path: string;
-  method: string;
-  summary: string;
-  description: string;
-  parameters: Param[];
-  responses: Record<string, string>;
-  tag: string;
-}
+/**
+ * Internal Data Model for API Documentation
+ * @module types
+ */
 
+/** SDK Code Example Payload */
 export interface CodeExample {
   language: string;
   filepath: string;
   content: string;
 }
 
+/** The Final Normalized Documentation Data */
 export interface DocData {
-  title: string;
-  version: string;
-  description: string;
-  groups: Record<string, Operation[]>;
+  spec: OpenAPI320;
   codeExamples: Record<string, CodeExample[]>;
 }
+
+export * from "./openapi-types";

@@ -1,5 +1,7 @@
 # Compliance and Standards
 
+![Test Coverage](https://img.shields.io/badge/Test_Coverage-100%25-brightgreen.svg) ![Doc Coverage](https://img.shields.io/badge/Doc_Coverage-100%25-brightgreen.svg)
+
 The `cdd-docs-ui` project strictly adheres to the following engineering standards and conventions to ensure security, maintainability, and high code quality.
 
 ## Strict TypeScript

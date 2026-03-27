@@ -61,14 +61,9 @@ srcFiles.forEach(file => {
 
 const docCov = totalExports === 0 ? 100 : Math.round((documentedExports / totalExports) * 100);
 
-// 3. Update README.md
-const readmePath = path.join(__dirname, '..', 'README.md');
-if (!fs.existsSync(readmePath)) {
-    console.error('README.md not found!');
-    process.exit(1);
-}
-
-let readme = fs.readFileSync(readmePath, 'utf-8');
+// 3. Update all root markdown files
+const rootDir = path.join(__dirname, '..');
+const mdFiles = fs.readdirSync(rootDir).filter(f => f.endsWith('.md') && fs.statSync(path.join(rootDir, f)).isFile());
 
 const testColor = testCov >= 90 ? 'brightgreen' : testCov >= 80 ? 'yellow' : 'red';
 const docColor = docCov >= 90 ? 'brightgreen' : docCov >= 80 ? 'yellow' : 'red';
@@ -78,20 +73,27 @@ const docBadge = `![Doc Coverage](https://img.shields.io/badge/Doc_Coverage-${do
 
 const testRegex = /!\[Test Coverage\]\(.+?\)/;
 const docRegex = /!\[Doc Coverage\]\(.+?\)/;
+const titleRegex = /^(# .+?(?:\r?\n|$))/;
 
-// Inject Test Coverage Badge
-if (testRegex.test(readme)) {
-    readme = readme.replace(testRegex, testBadge);
-} else {
-    readme = readme.replace('# CDD Docs UI\\n', '# CDD Docs UI\\n\\n' + testBadge + '\\n');
-}
+mdFiles.forEach(mdFile => {
+    const mdPath = path.join(rootDir, mdFile);
+    let md = fs.readFileSync(mdPath, 'utf-8');
 
-// Inject Doc Coverage Badge
-if (docRegex.test(readme)) {
-    readme = readme.replace(docRegex, docBadge);
-} else {
-    readme = readme.replace(testBadge, `${testBadge} ${docBadge}`);
-}
+    // Inject Test Coverage Badge
+    if (testRegex.test(md)) {
+        md = md.replace(testRegex, testBadge);
+    } else {
+        md = md.replace(titleRegex, `$1\n${testBadge}\n`);
+    }
 
-fs.writeFileSync(readmePath, readme);
-console.log(`Badges updated: Test Coverage = ${testCov}%, Doc Coverage = ${docCov}%`);
+    // Inject Doc Coverage Badge
+    if (docRegex.test(md)) {
+        md = md.replace(docRegex, docBadge);
+    } else {
+        md = md.replace(testBadge, `${testBadge} ${docBadge}`);
+    }
+
+    fs.writeFileSync(mdPath, md);
+});
+
+console.log(`Badges updated across all root markdown files: Test Coverage = ${testCov}%, Doc Coverage = ${docCov}%`);

@@ -1,5 +1,7 @@
 # CDD Docs UI Architecture
 
+![Test Coverage](https://img.shields.io/badge/Test_Coverage-100%25-brightgreen.svg) ![Doc Coverage](https://img.shields.io/badge/Doc_Coverage-100%25-brightgreen.svg)
+
 This document describes the high-level architecture of `cdd-docs-ui`, a CLI tool that parses OpenAPI specifications and generates a purely static, server-side rendered (SSR) API documentation website with progressive enhancement for interactive code examples.
 
 ## Architecture Diagram

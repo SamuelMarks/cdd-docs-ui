@@ -1,5 +1,7 @@
 # Developing CDD Docs UI
 
+![Test Coverage](https://img.shields.io/badge/Test_Coverage-100%25-brightgreen.svg) ![Doc Coverage](https://img.shields.io/badge/Doc_Coverage-100%25-brightgreen.svg)
+
 This guide outlines how to set up the development environment, make changes, run tests, and test the generated site locally.
 
 ## Prerequisites

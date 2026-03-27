@@ -1,5 +1,7 @@
 # CDD Docs UI
 
+![Test Coverage](https://img.shields.io/badge/Test_Coverage-100%25-brightgreen.svg) ![Doc Coverage](https://img.shields.io/badge/Doc_Coverage-100%25-brightgreen.svg)
+
 [![CI](https://github.com/SamuelMarks/cdd-docs-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/SamuelMarks/cdd-docs-ui/actions/workflows/ci.yml)
 
 A strictly-typed TypeScript CLI tool for generating static, progressively-enhanced API documentation websites based on OpenAPI specifications and code snippets from the `cdd` (Compiler Driven Development) toolchain.

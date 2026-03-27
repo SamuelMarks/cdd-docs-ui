@@ -1,5 +1,7 @@
 # CDD Docs UI Usage Guide
 
+![Test Coverage](https://img.shields.io/badge/Test_Coverage-100%25-brightgreen.svg) ![Doc Coverage](https://img.shields.io/badge/Doc_Coverage-100%25-brightgreen.svg)
+
 This document details how to use the `cdd-docs-ui` CLI to generate interactive, multi-language API documentation websites from OpenAPI specifications.
 
 ## Global Installation

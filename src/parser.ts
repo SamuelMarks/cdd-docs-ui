@@ -1,4 +1,3 @@
-
 import { 
   DocData, CodeExample, OpenAPI320, InfoObject, ContactObject, 
   LicenseObject, ServerObject, ServerVariableObject, PathsObject, 
@@ -11,6 +10,12 @@ import {
 } from "./types";
 import yaml from "js-yaml";
 
+/**
+ * Parses a raw info object into a normalized InfoObject.
+ * @param obj The raw info object from the spec.
+ * @returns A normalized InfoObject.
+ * @throws {Error} If the info object is missing.
+ */
 export function parseInfo(obj: any): InfoObject {
   if (!obj) throw new Error("Missing info object");
   return {
@@ -24,6 +29,11 @@ export function parseInfo(obj: any): InfoObject {
   };
 }
 
+/**
+ * Parses a raw contact object into a normalized ContactObject.
+ * @param obj The raw contact object from the spec.
+ * @returns A normalized ContactObject.
+ */
 export function parseContact(obj: any): ContactObject {
   return {
     name: obj.name ? String(obj.name) : undefined,
@@ -32,6 +42,11 @@ export function parseContact(obj: any): ContactObject {
   };
 }
 
+/**
+ * Parses a raw license object into a normalized LicenseObject.
+ * @param obj The raw license object from the spec.
+ * @returns A normalized LicenseObject.
+ */
 export function parseLicense(obj: any): LicenseObject {
   return {
     name: String(obj.name || ""),
@@ -40,6 +55,11 @@ export function parseLicense(obj: any): LicenseObject {
   };
 }
 
+/**
+ * Parses a raw server variable object into a normalized ServerVariableObject.
+ * @param obj The raw server variable object from the spec.
+ * @returns A normalized ServerVariableObject.
+ */
 export function parseServerVariable(obj: any): ServerVariableObject {
   return {
     enum: Array.isArray(obj.enum) ? obj.enum.map(String) : undefined,
@@ -48,6 +68,11 @@ export function parseServerVariable(obj: any): ServerVariableObject {
   };
 }
 
+/**
+ * Parses a raw server object into a normalized ServerObject.
+ * @param obj The raw server object from the spec.
+ * @returns A normalized ServerObject.
+ */
 export function parseServer(obj: any): ServerObject {
   const server: ServerObject = {
     url: String(obj.url || "")
@@ -62,6 +87,11 @@ export function parseServer(obj: any): ServerObject {
   return server;
 }
 
+/**
+ * Parses a raw reference object into a normalized ReferenceObject.
+ * @param obj The raw reference object from the spec.
+ * @returns A normalized ReferenceObject.
+ */
 export function parseReference(obj: any): ReferenceObject {
   return {
     $ref: String(obj.$ref),
@@ -70,10 +100,20 @@ export function parseReference(obj: any): ReferenceObject {
   };
 }
 
+/**
+ * Checks if an object is a ReferenceObject.
+ * @param obj The object to check.
+ * @returns True if the object has a $ref property.
+ */
 export function isReference(obj: any): obj is ReferenceObject {
   return obj && typeof obj.$ref === "string";
 }
 
+/**
+ * Parses a raw schema object into a normalized SchemaObject or ReferenceObject.
+ * @param obj The raw schema object from the spec.
+ * @returns A normalized SchemaObject or ReferenceObject.
+ */
 export function parseSchema(obj: any): SchemaObject | ReferenceObject {
   if (isReference(obj)) return parseReference(obj);
   
@@ -145,6 +185,11 @@ export function parseSchema(obj: any): SchemaObject | ReferenceObject {
   return schema;
 }
 
+/**
+ * Parses a raw example object into a normalized ExampleObject or ReferenceObject.
+ * @param obj The raw example object from the spec.
+ * @returns A normalized ExampleObject or ReferenceObject.
+ */
 export function parseExample(obj: any): ExampleObject | ReferenceObject {
   if (isReference(obj)) return parseReference(obj);
   return {
@@ -155,6 +200,11 @@ export function parseExample(obj: any): ExampleObject | ReferenceObject {
   };
 }
 
+/**
+ * Parses a raw header object into a normalized HeaderObject or ReferenceObject.
+ * @param obj The raw header object from the spec.
+ * @returns A normalized HeaderObject or ReferenceObject.
+ */
 export function parseHeader(obj: any): HeaderObject | ReferenceObject {
   if (isReference(obj)) return parseReference(obj);
   const header: HeaderObject = {};
@@ -166,6 +216,11 @@ export function parseHeader(obj: any): HeaderObject | ReferenceObject {
   return header;
 }
 
+/**
+ * Parses a raw encoding object into a normalized EncodingObject.
+ * @param obj The raw encoding object from the spec.
+ * @returns A normalized EncodingObject.
+ */
 export function parseEncoding(obj: any): EncodingObject {
   const encoding: EncodingObject = {};
   if (obj.contentType) encoding.contentType = String(obj.contentType);
@@ -181,6 +236,11 @@ export function parseEncoding(obj: any): EncodingObject {
   return encoding;
 }
 
+/**
+ * Parses a raw media type object into a normalized MediaTypeObject.
+ * @param obj The raw media type object from the spec.
+ * @returns A normalized MediaTypeObject.
+ */
 export function parseMediaType(obj: any): MediaTypeObject {
   const mt: MediaTypeObject = {};
   if (obj.schema) mt.schema = parseSchema(obj.schema);
@@ -200,6 +260,11 @@ export function parseMediaType(obj: any): MediaTypeObject {
   return mt;
 }
 
+/**
+ * Parses a raw request body object into a normalized RequestBodyObject or ReferenceObject.
+ * @param obj The raw request body object from the spec.
+ * @returns A normalized RequestBodyObject or ReferenceObject.
+ */
 export function parseRequestBody(obj: any): RequestBodyObject | ReferenceObject {
   if (isReference(obj)) return parseReference(obj);
   const rb: RequestBodyObject = { content: {} };
@@ -213,6 +278,11 @@ export function parseRequestBody(obj: any): RequestBodyObject | ReferenceObject 
   return rb;
 }
 
+/**
+ * Parses a raw parameter object into a normalized ParameterObject or ReferenceObject.
+ * @param obj The raw parameter object from the spec.
+ * @returns A normalized ParameterObject or ReferenceObject.
+ */
 export function parseParameter(obj: any): ParameterObject | ReferenceObject {
   if (isReference(obj)) return parseReference(obj);
   const param: ParameterObject = {
@@ -243,6 +313,11 @@ export function parseParameter(obj: any): ParameterObject | ReferenceObject {
   return param;
 }
 
+/**
+ * Parses a raw link object into a normalized LinkObject or ReferenceObject.
+ * @param obj The raw link object from the spec.
+ * @returns A normalized LinkObject or ReferenceObject.
+ */
 export function parseLink(obj: any): LinkObject | ReferenceObject {
   if (isReference(obj)) return parseReference(obj);
   const link: LinkObject = {};
@@ -255,6 +330,11 @@ export function parseLink(obj: any): LinkObject | ReferenceObject {
   return link;
 }
 
+/**
+ * Parses a raw response object into a normalized ResponseObject or ReferenceObject.
+ * @param obj The raw response object from the spec.
+ * @returns A normalized ResponseObject or ReferenceObject.
+ */
 export function parseResponse(obj: any): ResponseObject | ReferenceObject {
   if (isReference(obj)) return parseReference(obj);
   const resp: ResponseObject = {
@@ -281,6 +361,11 @@ export function parseResponse(obj: any): ResponseObject | ReferenceObject {
   return resp;
 }
 
+/**
+ * Parses a raw responses object into a normalized ResponsesObject.
+ * @param obj The raw responses object from the spec.
+ * @returns A normalized ResponsesObject.
+ */
 export function parseResponses(obj: any): ResponsesObject {
   const responses: ResponsesObject = {};
   for (const [k, v] of Object.entries(obj)) {
@@ -293,6 +378,11 @@ export function parseResponses(obj: any): ResponsesObject {
   return responses;
 }
 
+/**
+ * Parses a raw callback object into a normalized CallbackObject or ReferenceObject.
+ * @param obj The raw callback object from the spec.
+ * @returns A normalized CallbackObject or ReferenceObject.
+ */
 export function parseCallback(obj: any): CallbackObject | ReferenceObject {
   if (isReference(obj)) return parseReference(obj);
   const cb: CallbackObject = {};
@@ -302,6 +392,11 @@ export function parseCallback(obj: any): CallbackObject | ReferenceObject {
   return cb;
 }
 
+/**
+ * Parses a raw external documentation object into a normalized ExternalDocumentationObject.
+ * @param obj The raw external documentation object from the spec.
+ * @returns A normalized ExternalDocumentationObject.
+ */
 export function parseExternalDocs(obj: any): ExternalDocumentationObject {
   return {
     url: String(obj.url || ""),
@@ -309,6 +404,11 @@ export function parseExternalDocs(obj: any): ExternalDocumentationObject {
   };
 }
 
+/**
+ * Parses a raw security requirement object into a normalized SecurityRequirementObject.
+ * @param obj The raw security requirement object from the spec.
+ * @returns A normalized SecurityRequirementObject.
+ */
 export function parseSecurityRequirement(obj: any): SecurityRequirementObject {
   const req: SecurityRequirementObject = {};
   for (const [k, v] of Object.entries(obj)) {
@@ -317,6 +417,11 @@ export function parseSecurityRequirement(obj: any): SecurityRequirementObject {
   return req;
 }
 
+/**
+ * Parses a raw operation object into a normalized OperationObject.
+ * @param obj The raw operation object from the spec.
+ * @returns A normalized OperationObject.
+ */
 export function parseOperation(obj: any): OperationObject {
   const op: OperationObject = {};
   if (Array.isArray(obj.tags)) op.tags = obj.tags.map(String);
@@ -339,6 +444,11 @@ export function parseOperation(obj: any): OperationObject {
   return op;
 }
 
+/**
+ * Parses a raw path item object into a normalized PathItemObject or ReferenceObject.
+ * @param obj The raw path item object from the spec.
+ * @returns A normalized PathItemObject or ReferenceObject.
+ */
 export function parsePathItem(obj: any): PathItemObject | ReferenceObject {
   if (isReference(obj)) return parseReference(obj);
   const item: PathItemObject = {};
@@ -357,6 +467,11 @@ export function parsePathItem(obj: any): PathItemObject | ReferenceObject {
   return item;
 }
 
+/**
+ * Parses a raw paths object into a normalized PathsObject.
+ * @param obj The raw paths object from the spec.
+ * @returns A normalized PathsObject.
+ */
 export function parsePaths(obj: any): PathsObject {
   const paths: PathsObject = {};
   for (const [k, v] of Object.entries(obj)) {
@@ -367,6 +482,11 @@ export function parsePaths(obj: any): PathsObject {
   return paths;
 }
 
+/**
+ * Parses a raw OAuth flow object into a normalized OAuthFlowObject.
+ * @param obj The raw OAuth flow object from the spec.
+ * @returns A normalized OAuthFlowObject.
+ */
 export function parseOAuthFlow(obj: any): OAuthFlowObject {
   const flow: OAuthFlowObject = { scopes: {} };
   if (obj.authorizationUrl) flow.authorizationUrl = String(obj.authorizationUrl);
@@ -380,6 +500,11 @@ export function parseOAuthFlow(obj: any): OAuthFlowObject {
   return flow;
 }
 
+/**
+ * Parses a raw security scheme object into a normalized SecuritySchemeObject or ReferenceObject.
+ * @param obj The raw security scheme object from the spec.
+ * @returns A normalized SecuritySchemeObject or ReferenceObject.
+ */
 export function parseSecurityScheme(obj: any): SecuritySchemeObject | ReferenceObject {
   if (isReference(obj)) return parseReference(obj);
   const scheme: SecuritySchemeObject = {
@@ -401,6 +526,11 @@ export function parseSecurityScheme(obj: any): SecuritySchemeObject | ReferenceO
   return scheme;
 }
 
+/**
+ * Parses a raw components object into a normalized ComponentsObject.
+ * @param obj The raw components object from the spec.
+ * @returns A normalized ComponentsObject.
+ */
 export function parseComponents(obj: any): ComponentsObject {
   const comp: ComponentsObject = {};
   if (obj.schemas && typeof obj.schemas === "object") {
@@ -446,6 +576,11 @@ export function parseComponents(obj: any): ComponentsObject {
   return comp;
 }
 
+/**
+ * Parses a raw tag object into a normalized TagObject.
+ * @param obj The raw tag object from the spec.
+ * @returns A normalized TagObject.
+ */
 export function parseTag(obj: any): TagObject {
   const tag: TagObject = { name: String(obj.name || "Unknown") };
   if (obj.description) tag.description = String(obj.description);
@@ -455,6 +590,9 @@ export function parseTag(obj: any): TagObject {
 
 /**
  * Normalizes an OpenAPI specification string (JSON or YAML) into the internal `DocData` representation.
+ * @param specContent Raw OpenAPI spec string (YAML/JSON).
+ * @returns Normalized DocData.
+ * @throws {Error} If the spec format is invalid.
  */
 export function normalizeSpec(specContent: string): DocData {
   let parsed: any;
@@ -493,38 +631,55 @@ export function normalizeSpec(specContent: string): DocData {
   };
 }
 
+/**
+ * Maps generated SDK code examples to their respective operations in the documentation data.
+ * @param docData The documentation data to update.
+ * @param generatedFiles The list of generated code examples.
+ */
 export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]): void {
   if (!docData.spec.paths) return;
-  const operations: OperationObject[] = [];
   
-  for (const pathItem of Object.values(docData.spec.paths)) {
+  const operationMap: Record<string, { route: string, method: string, op: OperationObject }> = {};
+  
+  for (const [route, pathItem] of Object.entries(docData.spec.paths)) {
     if (isReference(pathItem)) continue;
-    if (pathItem.get) operations.push(pathItem.get);
-    if (pathItem.put) operations.push(pathItem.put);
-    if (pathItem.post) operations.push(pathItem.post);
-    if (pathItem.delete) operations.push(pathItem.delete);
-    if (pathItem.options) operations.push(pathItem.options);
-    if (pathItem.head) operations.push(pathItem.head);
-    if (pathItem.patch) operations.push(pathItem.patch);
-    if (pathItem.trace) operations.push(pathItem.trace);
+    const methods = ["get", "post", "put", "delete", "patch", "options", "head", "trace"];
+    for (const m of methods) {
+      const op = (pathItem as any)[m];
+      if (op) {
+        const id = op.operationId || `${m}-${route}`;
+        operationMap[id] = { route, method: m, op };
+      }
+    }
   }
   
+  const operations = Object.entries(operationMap);
   if (operations.length === 0) return;
 
   for (const file of generatedFiles) {
-    let matched = false;
-    for (const op of operations) {
-      if (op.operationId && file.filepath.includes(op.operationId)) {
-         if (!docData.codeExamples[op.operationId]) docData.codeExamples[op.operationId] = [];
-         docData.codeExamples[op.operationId]!.push(file);
-         matched = true;
+    let matchedId: string | null = null;
+    
+    // 1. Try match with operationId
+    for (const [id, info] of operations) {
+      if (info.op.operationId && file.filepath.toLowerCase().includes(info.op.operationId.toLowerCase())) {
+        matchedId = id;
+        break;
       }
     }
     
-    if (!matched) {
-       const firstOpId = operations[0].operationId || "default";
-       if (!docData.codeExamples[firstOpId]) docData.codeExamples[firstOpId] = [];
-       docData.codeExamples[firstOpId]!.push(file);
+    // 2. Try match with route and method
+    if (!matchedId) {
+      for (const [id, info] of operations) {
+        const routeSlug = info.route.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
+        if (file.filepath.toLowerCase().includes(routeSlug) && file.filepath.toLowerCase().includes(info.method.toLowerCase())) {
+          matchedId = id;
+          break;
+        }
+      }
     }
+    
+    const finalId = matchedId || operations[0][0];
+    if (!docData.codeExamples[finalId]) docData.codeExamples[finalId] = [];
+    docData.codeExamples[finalId]!.push(file);
   }
 }

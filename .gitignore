@@ -30,3 +30,17 @@ examples.json
 styles.css
 *.html
 cdd-ctl
+
+# Backup and Patch files
+*.patch
+*.orig
+*.bak
+*.rej
+*~
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.*
+!.env.example

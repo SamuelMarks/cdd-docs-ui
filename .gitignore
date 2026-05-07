@@ -6,30 +6,48 @@ dist/
 build/
 out/
 coverage/
+*.tsbuildinfo
 
-# Generated documentation outputs (from local test runs)
-example/public/
-public/
-
-# IDEs and Editors
+# OS / Tooling / IDEs
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
 .vscode/
 .idea/
 *.swp
 *.swo
-.DS_Store
+*.swn
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.xyz
 
-# Temporary files
+# Temporary files & Logs
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 .eslintcache
+.stylelintcache
+.prettiercache
+.vite/
+.nyc_output/
+.vitest/
 
-# Project specific artifacts
-examples.json
-styles.css
-*.html
+# Project specific artifacts & binary
 cdd-ctl
+*.html
+
+# Example outputs
+example/public/
+public/
 
 # Backup and Patch files
 *.patch
@@ -37,10 +55,23 @@ cdd-ctl
 *.bak
 *.rej
 *~
-*.swp
-*.swo
+*.orig.*
 
-# Environment variables
+# Environment variables & Secrets
 .env
 .env.*
 !.env.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+*.keystore
+
+# macOS specific temp files
+*.DS_Store

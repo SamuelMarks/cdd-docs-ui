@@ -1,4 +1,4 @@
-import { CodeExample, OpenAPI320, SchemaObject, ReferenceObject, OperationObject } from "./types";
+import { CodeExample, SchemaObject, ReferenceObject, OperationObject, DocTranslations, defaultTranslations } from "./types";
 import { normalizeSpec, mapSdkExamples, isReference } from "./parser";
 
 /**
@@ -38,7 +38,7 @@ export function generateCurl(method: string, route: string, op: OperationObject)
  * @param namePrefix Prefix for property IDs to ensure uniqueness
  * @returns HTML string for the schema
  */
-export function renderSchema(schema: SchemaObject | ReferenceObject, depth: number = 0, namePrefix: string = ""): string {
+export function renderSchema(schema: SchemaObject | ReferenceObject, depth: number = 0, namePrefix: string = "", t: DocTranslations = defaultTranslations): string {
   if (isReference(schema)) {
     return `<span class="cdd-schema-ref">${schema.$ref.split('/').pop()}</span>`;
   }
@@ -60,12 +60,12 @@ export function renderSchema(schema: SchemaObject | ReferenceObject, depth: numb
         <td><span class="cdd-prop-desc">${propSchema.description || ""}</span></td>
       </tr>`;
       if (propSchema.type === "object" || propSchema.type === "array") {
-        html += `<tr><td colspan="3">${renderSchema(propSchema, depth + 1, propId)}</td></tr>`;
+        html += `<tr><td colspan="3">${renderSchema(propSchema, depth + 1, propId, t)}</td></tr>`;
       }
     }
     html += `</tbody></table>`;
   } else if (schema.type === "array" && schema.items) {
-    html += `<div class="cdd-schema-array">Array of: ${renderSchema(schema.items, depth + 1, namePrefix)}</div>`;
+    html += `<div class="cdd-schema-array">${t.arrayOf} ${renderSchema(schema.items, depth + 1, namePrefix, t)}</div>`;
   } else {
     html += `<span class="cdd-prop-type">${schema.type || 'any'}</span>`;
     if (schema.description) html += `<p class="cdd-prop-desc">${schema.description}</p>`;
@@ -82,7 +82,8 @@ export function renderSchema(schema: SchemaObject | ReferenceObject, depth: numb
  * @param theme UI theme ('light' or 'dark')
  * @returns Full HTML document string
  */
-export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] = [], theme: "light" | "dark" = "light", injectLiveReload: boolean = false): string {
+export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] = [], theme: "light" | "dark" = "light", injectLiveReload: boolean = false, customTranslations: Partial<DocTranslations> = {}): string {
+  const t: DocTranslations = { ...defaultTranslations, ...customTranslations };
   const data = normalizeSpec(specContent);
   if (sdkExamples.length > 0) {
     mapSdkExamples(data, sdkExamples);
@@ -127,7 +128,7 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
             ${op.description ? `<div class="cdd-description">${op.description}</div>` : ""}
             
             ${op.parameters ? `
-              <h3 class="cdd-section-title">Parameters</h3>
+              <h3 class="cdd-section-title">${t.parameters}</h3>
               <table class="cdd-params-table">
                 <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Description</th></tr></thead>
                 <tbody>
@@ -146,7 +147,7 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
             ` : ""}
 
             <details class="cdd-try-it-out">
-              <summary class="cdd-try-summary">Try It Out</summary>
+              <summary class="cdd-try-summary">${t.tryItOut}</summary>
               <form class="cdd-try-form" method="${m === 'get' ? 'GET' : 'POST'}" action="https://api.example.com${route}" data-method="${m.toUpperCase()}" data-route="${route}">
                 ${op.parameters ? op.parameters.map(p => {
                   if (isReference(p)) return "";
@@ -159,14 +160,14 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
                 }).join("") : ""}
                 ${op.requestBody && !isReference(op.requestBody) ? `
                   <div class="cdd-try-field">
-                    <label for="try-${id}-body">Request Body (JSON)</label>
+                    <label for="try-${id}-body">${t.requestBody}</label>
                     <textarea id="try-${id}-body" name="requestBody" rows="4"></textarea>
                   </div>
                 ` : ""}
-                <button type="submit" class="cdd-try-btn">Execute</button>
+                <button type="submit" class="cdd-try-btn">${t.execute}</button>
               </form>
               <div class="cdd-try-response" style="display: none; margin-top: 1rem;">
-                <h4 style="margin:0 0 0.5rem 0;">Response</h4>
+                <h4 style="margin:0 0 0.5rem 0;">${t.response}</h4>
                 <div class="cdd-try-status"></div>
                 <pre><code class="cdd-try-body"></code></pre>
               </div>
@@ -184,7 +185,7 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
 
                 <div class="cdd-tab-content cdd-tab-content-curl">
                   <div style="position: relative;">
-                    <button class="cdd-copy-btn" aria-label="Copy code">Copy</button>
+                    <button class="cdd-copy-btn">${t.copy}</button>
                     <pre><code class="language-bash">${curl}</code></pre>
                   </div>
                 </div>
@@ -197,11 +198,11 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
                         ${langEx.length > 0 ? langEx.map(ex => `
                           <div class="cdd-variant-block ${ex.includeImports ? 'cdd-show-if-imports' : 'cdd-hide-if-imports'} ${ex.includeWrapping ? 'cdd-show-if-wrapping' : 'cdd-hide-if-wrapping'}">
                             <div style="position: relative;">
-                              <button class="cdd-copy-btn" aria-label="Copy code">Copy</button>
+                              <button class="cdd-copy-btn">${t.copy}</button>
                               <pre><code class="language-${prismLang}">${ex.content}</code></pre>
                             </div>
                           </div>
-                        `).join("") : `<div class="cdd-no-example">No example for ${lang}</div>`}
+                        `).join("") : `<div class="cdd-no-example">${t.noExampleFor} ${lang}</div>`}
                       </div>
                     `;
                   }).join("")}
@@ -218,7 +219,7 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
 
   // Build Schemas
   if (spec.components?.schemas) {
-    schemasHtml += `<h2 id="section-schemas" class="cdd-main-title">Schemas</h2>`;
+    schemasHtml += `<h2 id="section-schemas" class="cdd-main-title">${t.schemas}</h2>`;
     for (const [name, schema] of Object.entries(spec.components.schemas)) {
       schemasHtml += `
         <div id="schema-${name}" class="cdd-schema-section">
@@ -252,7 +253,7 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
   `;
 
   return `<!DOCTYPE html>
-<html lang="en">
+<html lang="${t.locale}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -277,7 +278,7 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
       ${darkVars}
     }
 
-    ${languages.map((lang, i) => `#lang-opt-${lang}:checked ~ .cdd-layout .cdd-show-if-${lang} { display: block; }`).join("\n")}
+    ${languages.map(lang => `#lang-opt-${lang}:checked ~ .cdd-layout .cdd-show-if-${lang} { display: block; }`).join("\n")}
     #opt-imports:checked ~ * { --cdd-display-imports: block; }
     #opt-imports:not(:checked) ~ * { --cdd-display-imports: none; }
     #opt-wrapping:checked ~ * { --cdd-display-wrapping: block; }
@@ -291,7 +292,7 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
       line-height: 1.5;
     }
 
-    .cdd-hidden { display: none !important; }
+    .cdd-visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
     .cdd-layout {
       display: grid;
@@ -347,8 +348,9 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
 
     .cdd-code-card { background: #1e1e1e; border-radius: 12px; color: #fff; overflow: hidden; }
     .cdd-code-tabs { display: flex; flex-wrap: wrap; }
-    .cdd-tab-input { display: none; }
-    .cdd-tab-label { padding: 0.75rem 1rem; font-size: 0.875rem; cursor: pointer; border-bottom: 2px solid transparent; opacity: 0.7; }
+    .cdd-tab-input { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .cdd-tab-label { padding: 0.75rem 1rem; font-size: 0.875rem; cursor: pointer; border-bottom: 2px solid transparent; opacity: 0.7; transition: all 0.2s; }
+    .cdd-tab-input:focus-visible + .cdd-tab-label { outline: 2px solid var(--cdd-primary); outline-offset: -2px; opacity: 1; }
     .cdd-tab-input:checked + .cdd-tab-label { border-bottom-color: var(--cdd-primary); opacity: 1; }
     
     .cdd-tab-content { display: none; width: 100%; padding: 1rem; background: #000; }
@@ -377,9 +379,13 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
     .cdd-try-btn:hover { opacity: 0.9; }
 
     ${languages.map(lang => `#lang-opt-${lang}:checked ~ .cdd-layout label[for="lang-opt-${lang}"] { background: var(--cdd-primary); color: var(--cdd-on-primary); border-color: var(--cdd-primary); font-weight: 500; }`).join("\n")}
+    ${languages.map(lang => `#lang-opt-${lang}:focus-visible ~ .cdd-layout label[for="lang-opt-${lang}"] { outline: 2px solid var(--cdd-primary); outline-offset: 2px; }`).join("\n")}
     #opt-imports:checked ~ .cdd-layout label[for="opt-imports"] { background: var(--cdd-primary); color: var(--cdd-on-primary); border-color: var(--cdd-primary); }
+    #opt-imports:focus-visible ~ .cdd-layout label[for="opt-imports"] { outline: 2px solid var(--cdd-primary); outline-offset: 2px; }
     #opt-wrapping:checked ~ .cdd-layout label[for="opt-wrapping"] { background: var(--cdd-primary); color: var(--cdd-on-primary); border-color: var(--cdd-primary); }
+    #opt-wrapping:focus-visible ~ .cdd-layout label[for="opt-wrapping"] { outline: 2px solid var(--cdd-primary); outline-offset: 2px; }
     #opt-dark-mode:checked ~ .cdd-layout label[for="opt-dark-mode"] { background: var(--cdd-primary); color: var(--cdd-on-primary); border-color: var(--cdd-primary); }
+    #opt-dark-mode:focus-visible ~ .cdd-layout label[for="opt-dark-mode"] { outline: 2px solid var(--cdd-primary); outline-offset: 2px; }
 
     /* Variant display logic */
     .cdd-variant-block { display: none; }
@@ -391,17 +397,17 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
   </style>
 </head>
 <body>
-  ${languages.map((lang, i) => `<input type="radio" id="lang-opt-${lang}" name="global-lang" class="cdd-hidden" ${i === 0 ? 'checked' : ''}>`).join("")}
-  <input type="checkbox" id="opt-imports" class="cdd-hidden" checked>
-  <input type="checkbox" id="opt-wrapping" class="cdd-hidden" checked>
-  <input type="checkbox" id="opt-dark-mode" class="cdd-hidden" ${theme === "dark" ? 'checked' : ''}>
+  ${languages.map((lang, i) => `<input type="radio" id="lang-opt-${lang}" name="global-lang" class="cdd-visually-hidden" ${i === 0 ? 'checked' : ''}>`).join("")}
+  <input type="checkbox" id="opt-imports" class="cdd-visually-hidden" checked>
+  <input type="checkbox" id="opt-wrapping" class="cdd-visually-hidden" checked>
+  <input type="checkbox" id="opt-dark-mode" class="cdd-visually-hidden" ${theme === "dark" ? 'checked' : ''}>
 
   <div class="cdd-layout">
     <aside class="cdd-sidebar-left">
       <h1 style="font-size: 1.25rem;">${spec.info.title}</h1>
-      <div class="cdd-sidebar-title">Paths</div>
+      <div class="cdd-sidebar-title">${t.paths}</div>
       ${tocHtml}
-      <div class="cdd-sidebar-title">Schemas</div>
+      <div class="cdd-sidebar-title">${t.schemas}</div>
       <nav>
         ${spec.components?.schemas ? Object.keys(spec.components.schemas).map(name => `<a href="#schema-${name}" class="cdd-toc-item">${name}</a>`).join("") : ""}
       </nav>
@@ -417,14 +423,14 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
     </main>
 
     <aside class="cdd-sidebar-right">
-      <div class="cdd-sidebar-title">Settings</div>
+      <div class="cdd-sidebar-title">${t.settings}</div>
       
       <p style="font-size: 0.875rem; margin-bottom: 0.5rem;">Appearance</p>
       <label for="opt-dark-mode" class="cdd-setting-label">
-        Dark Mode
+        ${t.darkMode}
       </label>
 
-      <p style="font-size: 0.875rem; margin-top: 1rem; margin-bottom: 0.5rem;">Language</p>
+      <p style="font-size: 0.875rem; margin-top: 1rem; margin-bottom: 0.5rem;">${t.language}</p>
       ${languages.map(lang => `
         <label for="lang-opt-${lang}" class="cdd-setting-label">
           ${lang}
@@ -433,10 +439,10 @@ export function generateAOTHtml(specContent: string, sdkExamples: CodeExample[] 
       
       <div style="margin-top: 1rem;">
         <label for="opt-imports" class="cdd-setting-label">
-          Include Imports
+          ${t.includeImports}
         </label>
         <label for="opt-wrapping" class="cdd-setting-label">
-          Include Wrapping
+          ${t.includeWrapping}
         </label>
       </div>
     </aside>

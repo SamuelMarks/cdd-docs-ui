@@ -1,5 +1,6 @@
 
 import { generateAOTHtml } from "./aot-generator";
+import { DocTranslations, defaultTranslations } from "./types";
 
 /**
  * Progressive Enhancement for API Documentation.
@@ -10,8 +11,11 @@ import { generateAOTHtml } from "./aot-generator";
 /**
  * Initializes the API documentation interactive features within a specific container.
  * @param container The DOM element containing the API documentation layout.
+ * @param customTranslations Optional custom string dictionary for i18n
  */
-export function initApiDocs(container: Document | HTMLElement = document): void {
+export function initApiDocs(container: Document | HTMLElement = document, customTranslations: Partial<DocTranslations> = {}): void {
+  const t: DocTranslations = { ...defaultTranslations, ...customTranslations };
+
   // Sync proxy inputs in the sidebar with the real hidden inputs at the top
   const langProxies = container.querySelectorAll('input[name="ui-lang-proxy"]');
   langProxies.forEach(proxy => {
@@ -59,7 +63,8 @@ export function initApiDocs(container: Document | HTMLElement = document): void 
   // Smooth search implementation with performance optimization
   const searchInput = document.createElement("input");
   searchInput.type = "text";
-  searchInput.placeholder = "Search endpoints...";
+  searchInput.placeholder = t.searchPlaceholder;
+  searchInput.setAttribute("aria-label", t.searchPlaceholder);
   searchInput.className = "cdd-search-input";
   searchInput.style.width = "100%";
   searchInput.style.padding = "0.5rem";
@@ -126,7 +131,7 @@ export function initApiDocs(container: Document | HTMLElement = document): void 
       try {
         await navigator.clipboard.writeText(codeEl.textContent || '');
         const originalText = btn.textContent;
-        btn.textContent = 'Copied!';
+        btn.textContent = t.copied;
         btn.classList.add('cdd-copied');
         
         setTimeout(() => {
@@ -182,7 +187,7 @@ export function initApiDocs(container: Document | HTMLElement = document): void 
       const bodyEl = responseContainer.querySelector('.cdd-try-body');
       
       responseContainer.style.display = 'block';
-      if (statusEl) statusEl.textContent = 'Loading...';
+      if (statusEl) statusEl.textContent = t.loading;
       if (bodyEl) bodyEl.textContent = '';
 
       try {
@@ -191,10 +196,10 @@ export function initApiDocs(container: Document | HTMLElement = document): void 
         const res = await fetch(url, {
           method,
           headers,
-          body: (method !== 'GET' && method !== 'HEAD') ? body : undefined
+          body: (method !== 'GET' && method !== 'HEAD') ? body : null
         });
 
-        if (statusEl) statusEl.textContent = `Status: ${res.status} ${res.statusText}`;
+        if (statusEl) statusEl.textContent = `${t.status}: ${res.status} ${res.statusText}`;
         const text = await res.text();
         try {
           // Pretty print JSON
@@ -203,7 +208,7 @@ export function initApiDocs(container: Document | HTMLElement = document): void 
           if (bodyEl) bodyEl.textContent = text;
         }
       } catch (err) {
-        if (statusEl) statusEl.textContent = 'Error';
+        if (statusEl) statusEl.textContent = t.error;
         if (bodyEl) bodyEl.textContent = err instanceof Error ? err.message : String(err);
       }
     });
@@ -215,14 +220,29 @@ export function initApiDocs(container: Document | HTMLElement = document): void 
  * Usage: <cdd-api-docs spec="..."></cdd-api-docs>
  */
 export class CDDApiDocs extends HTMLElement {
+  private _translations: Partial<DocTranslations> = {};
+
   constructor() {
     super();
+  }
+
+  get translations() {
+    return this._translations;
+  }
+
+  set translations(val: Partial<DocTranslations>) {
+    this._translations = val;
+    if (this.hasAttribute('spec')) {
+      this.renderSpec(this.getAttribute('spec') || "");
+    } else if (this.innerHTML.trim() && this.querySelector('.cdd-layout')) {
+      initApiDocs(this, this._translations);
+    }
   }
 
   connectedCallback() {
     // If we have inner HTML already, just initialize it (Progressive Enhancement)
     if (this.innerHTML.trim() && this.querySelector('.cdd-layout')) {
-      initApiDocs(this);
+      initApiDocs(this, this._translations);
     } else if (this.hasAttribute('spec')) {
       // If we have a spec attribute, generate it
       this.renderSpec(this.getAttribute('spec') || "");
@@ -237,7 +257,7 @@ export class CDDApiDocs extends HTMLElement {
    */
   public renderSpec(specContent: string) {
     try {
-      const html = generateAOTHtml(specContent, [], localStorage.getItem("cdd-theme") === "dark" ? "dark" : "light");
+      const html = generateAOTHtml(specContent, [], localStorage.getItem("cdd-theme") === "dark" ? "dark" : "light", false, this._translations);
       
       // We extract the body contents, skipping the <html><head>... stuff
       const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
@@ -247,7 +267,7 @@ export class CDDApiDocs extends HTMLElement {
         this.innerHTML = html; // Fallback
       }
       
-      initApiDocs(this);
+      initApiDocs(this, this._translations);
       
       // Dispatch ready event if anyone is listening directly to the element
       this.dispatchEvent(new CustomEvent('docs-ready'));

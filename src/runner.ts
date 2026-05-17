@@ -1,9 +1,9 @@
-import * as child_process from "node:child_process";
-import { promisify } from "node:util";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
-import { CDDOutput, OpenAPI320, OperationObject, ReferenceObject } from "./types";
-import { isReference } from "./parser";
+import * as child_process from 'node:child_process';
+import { promisify } from 'node:util';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { CDDOutput, OpenAPI320, OperationObject, ReferenceObject } from './types';
+import { isReference } from './parser';
 
 const execFileAsync = promisify(child_process.execFile);
 
@@ -13,14 +13,15 @@ const execFileAsync = promisify(child_process.execFile);
  * @returns The resolved path to the cdd-ctl binary.
  */
 export function resolveCddCtlPath(): string {
-    if (process.env.CDD_CTL_PATH && existsSync(process.env.CDD_CTL_PATH)) {
-        return resolve(process.env.CDD_CTL_PATH);
+    const cddPath = process.env['CDD_CTL_PATH'];
+    if (cddPath && existsSync(cddPath)) {
+        return resolve(cddPath);
     }
-    const localPath = resolve(process.cwd(), "cdd-ctl");
+    const localPath = resolve(process.cwd(), 'cdd-ctl');
     if (existsSync(localPath)) {
         return localPath;
     }
-    return "./cdd-ctl";
+    return './cdd-ctl';
 }
 
 /**
@@ -34,21 +35,21 @@ export function parseCDDOutput(stdout: string): CDDOutput {
     try {
         parsed = JSON.parse(stdout);
     } catch (e) {
-        throw new Error("Failed to parse cdd-ctl output as JSON");
+        throw new Error('Failed to parse cdd-ctl output as JSON');
     }
 
-    if (!parsed || typeof parsed !== "object" || !parsed.endpoints || typeof parsed.endpoints !== "object") {
-        throw new Error("Invalid CDDOutput structure: missing endpoints object");
+    if (!parsed || typeof parsed !== 'object' || !parsed.endpoints || typeof parsed.endpoints !== 'object') {
+        throw new Error('Invalid CDDOutput structure: missing endpoints object');
     }
 
     // Strict validation
     for (const path of Object.keys(parsed.endpoints)) {
         const methods = parsed.endpoints[path];
-        if (!methods || typeof methods !== "object") {
+        if (!methods || typeof methods !== 'object') {
             throw new Error(`Invalid CDDOutput structure: endpoints['${path}'] must be an object`);
         }
         for (const method of Object.keys(methods)) {
-            if (typeof methods[method] !== "string") {
+            if (typeof methods[method] !== 'string') {
                 throw new Error(`Invalid CDDOutput structure: endpoints['${path}']['${method}'] must be a string`);
             }
         }
@@ -76,19 +77,15 @@ export interface CDDRunOptions {
  * @param options Additional options for execution.
  * @returns A promise that resolves to the stdout string from the subprocess.
  */
-export async function runCddCtl(
-    lang: string,
-    specPath: string,
-    options: CDDRunOptions = {}
-): Promise<string> {
-    const cddCtlPath = options.cddCtlPath || "./cdd-ctl";
-    const args = [lang, "to_docs_json", "-i", specPath];
-    
+export async function runCddCtl(lang: string, specPath: string, options: CDDRunOptions = {}): Promise<string> {
+    const cddCtlPath = options.cddCtlPath || './cdd-ctl';
+    const args = [lang, 'to_docs_json', '-i', specPath];
+
     if (options.noImports) {
-        args.push("--no-imports");
+        args.push('--no-imports');
     }
     if (options.noWrapping) {
-        args.push("--no-wrapping");
+        args.push('--no-wrapping');
     }
 
     const { stdout } = await execFileAsync(cddCtlPath, args);
@@ -103,10 +100,10 @@ export async function runCddCtl(
  * @returns A CDDOutput containing the mock text.
  */
 export function generateMockFallback(lang: string, spec: OpenAPI320, options: CDDRunOptions = {}): CDDOutput {
-    let variant = "default";
-    if (options.noImports && options.noWrapping) variant = "noImportsNoWrapping";
-    else if (options.noImports) variant = "noImports";
-    else if (options.noWrapping) variant = "noWrapping";
+    let variant = 'default';
+    if (options.noImports && options.noWrapping) variant = 'noImportsNoWrapping';
+    else if (options.noImports) variant = 'noImports';
+    else if (options.noWrapping) variant = 'noWrapping';
 
     const msg = `FAILED CLI COMMAND ./cdd-ctl ${lang} (variant: ${variant})`;
     const output: CDDOutput = { endpoints: {} };
@@ -116,7 +113,7 @@ export function generateMockFallback(lang: string, spec: OpenAPI320, options: CD
     for (const [route, pathItem] of Object.entries(spec.paths)) {
         if (isReference(pathItem)) continue;
         output.endpoints[route] = {};
-        const methods = ["get", "post", "put", "delete", "patch"] as const;
+        const methods = ['get', 'post', 'put', 'delete', 'patch'] as const;
         for (const m of methods) {
             if ((pathItem as any)[m]) {
                 output.endpoints[route][m] = msg;
@@ -128,8 +125,19 @@ export function generateMockFallback(lang: string, spec: OpenAPI320, options: CD
 }
 
 export const SUPPORTED_LANGUAGES = [
-    "c", "cpp", "csharp", "go", "java", "kotlin", "php", 
-    "python-all", "ruby", "rust", "sh", "swift", "ts"
+    'c',
+    'cpp',
+    'csharp',
+    'go',
+    'java',
+    'kotlin',
+    'php',
+    'python-all',
+    'ruby',
+    'rust',
+    'sh',
+    'swift',
+    'ts',
 ];
 
 /**
@@ -144,7 +152,7 @@ export async function generateVariant(
     lang: string,
     specPath: string,
     spec: OpenAPI320,
-    options: CDDRunOptions = {}
+    options: CDDRunOptions = {},
 ): Promise<CDDOutput> {
     try {
         const stdout = await runCddCtl(lang, specPath, options);
@@ -155,7 +163,7 @@ export async function generateVariant(
     }
 }
 
-import { CodeExample } from "./types";
+import { CodeExample } from './types';
 
 /**
  * Generates all snippets concurrently across multiple language targets and variants.
@@ -169,13 +177,13 @@ export async function generateAllSnippets(
     languages: string[] = SUPPORTED_LANGUAGES,
     specPath: string,
     spec: OpenAPI320,
-    cddCtlPath: string = resolveCddCtlPath()
+    cddCtlPath: string = resolveCddCtlPath(),
 ): Promise<CodeExample[]> {
     const variants: { includeImports: boolean; includeWrapping: boolean; options: CDDRunOptions }[] = [
         { includeImports: true, includeWrapping: true, options: { cddCtlPath } },
         { includeImports: false, includeWrapping: true, options: { noImports: true, cddCtlPath } },
         { includeImports: true, includeWrapping: false, options: { noWrapping: true, cddCtlPath } },
-        { includeImports: false, includeWrapping: false, options: { noImports: true, noWrapping: true, cddCtlPath } }
+        { includeImports: false, includeWrapping: false, options: { noImports: true, noWrapping: true, cddCtlPath } },
     ];
 
     const promises: Promise<CodeExample[]>[] = [];
@@ -188,17 +196,18 @@ export async function generateAllSnippets(
                     for (const route of Object.keys(output.endpoints)) {
                         const methods = output.endpoints[route];
                         for (const method of Object.keys(methods)) {
+                            const content = methods[method];
                             examples.push({
-                                language: lang === "python-all" ? "python" : lang,
-                                filepath: `${route.replace(/[^a-zA-Z0-9]/g, "_")}_${method}`,
-                                content: methods[method],
+                                language: lang === 'python-all' ? 'python' : lang,
+                                filepath: `${route.replace(/[^a-zA-Z0-9]/g, '_')}_${method}`,
+                                content: content,
                                 includeImports: variant.includeImports,
-                                includeWrapping: variant.includeWrapping
+                                includeWrapping: variant.includeWrapping,
                             });
                         }
                     }
                     return examples;
-                })
+                }),
             );
         }
     }

@@ -4,7 +4,7 @@
 
 This document outlines the required features, structural changes, and delivery checklist for the `cdd-ctl` (Rust) repository to seamlessly integrate with the `cdd-docs-ui` documentation runner.
 
-As `cdd-docs-ui` is responsible for generating comprehensive API documentation, it relies on invoking `cdd-ctl` to dynamically generate valid code snippets across 13 distinct `cdd-*` source languages.
+As `cdd-docs-ui` is responsible for generating comprehensive API documentation (in its AOT CLI mode), it relies on invoking `cdd-ctl` to dynamically generate valid code snippets across 13 distinct `cdd-*` source languages.
 
 ### Feature Delivery Checklist
 

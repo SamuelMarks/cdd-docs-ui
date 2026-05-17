@@ -26,16 +26,20 @@ flowchart TD
     classDef terminal font-family:'Google Sans Medium',fill:#20344b,color:#57caff,stroke:#57caff,stroke-width:2px
 
     A[OpenAPI Spec]:::subhead
-    B(cdd-docs-ui JS Runner):::headline
+    B(AOT CLI Generator):::headline
+    B2(Web Component SPA):::headline
     C{cdd-ctl Rust CLI}:::highlight
     D[[13 Language Targets]]:::bodytext
     E[Static HTML Site]:::terminal
+    F[Dynamic Browser UI]:::terminal
 
     A -- Parses --> B
+    A -- Parses --> B2
     B -- Executes --> C
     C -- Routes to --> D
     D -- JSON Snippets --> B
     B -- Renders --> E
+    B2 -- Renders --> F
 ```
 
 ### Feature Delivery Checklist

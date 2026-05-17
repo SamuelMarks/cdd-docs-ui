@@ -131,6 +131,10 @@ export interface PathItemObject {
     patch?: OperationObject;
     /** A definition of a TRACE operation on this path. */
     trace?: OperationObject;
+    /** A definition of a QUERY operation on this path. */
+    query?: OperationObject;
+    /** A map of custom HTTP methods to subcommands. */
+    additionalOperations?: Record<string, OperationObject>;
     /** An alternative server array to service all operations in this path. */
     servers?: ServerObject[];
     /** A list of parameters that are applicable for all the operations described under this path. */
@@ -174,7 +178,7 @@ export interface ParameterObject {
     /** The name of the parameter. */
     name: string;
     /** The location of the parameter. */
-    in: "query" | "header" | "path" | "cookie";
+    in: 'query' | 'header' | 'path' | 'cookie';
     /** A brief description of the parameter. */
     description?: string;
     /** Determines whether this parameter is mandatory. */
@@ -217,12 +221,18 @@ export interface RequestBodyObject {
 export interface MediaTypeObject {
     /** The schema defining the content of the request, response, or parameter. */
     schema?: SchemaObject | ReferenceObject;
+    /** The schema defining the content of the items of an array. */
+    itemSchema?: SchemaObject | ReferenceObject;
     /** Example of the media type. */
     example?: any;
     /** Examples of the media type. */
     examples?: Record<string, ExampleObject | ReferenceObject>;
     /** A map between a property name and its encoding information. */
     encoding?: Record<string, EncodingObject>;
+    /** A map between a property name and its encoding information for prefix. */
+    prefixEncoding?: Record<string, EncodingObject>;
+    /** A map between a property name and its encoding information for array items. */
+    itemEncoding?: Record<string, EncodingObject>;
 }
 
 /**
@@ -239,6 +249,10 @@ export interface EncodingObject {
     explode?: boolean;
     /** Determines whether the parameter value SHOULD allow reserved characters. */
     allowReserved?: boolean;
+    /** A map between a property name and its encoding information for prefix. */
+    prefixEncoding?: Record<string, EncodingObject>;
+    /** A map between a property name and its encoding information for array items. */
+    itemEncoding?: Record<string, EncodingObject>;
 }
 
 /**
@@ -308,7 +322,7 @@ export interface LinkObject {
 /**
  * The Header Object follows the structure of the Parameter Object with name and in excluded.
  */
-export interface HeaderObject extends Omit<ParameterObject, "name" | "in"> {}
+export interface HeaderObject extends Omit<ParameterObject, 'name' | 'in'> {}
 
 /**
  * Adds metadata to a single tag that is used by the Operation Object.
@@ -316,10 +330,16 @@ export interface HeaderObject extends Omit<ParameterObject, "name" | "in"> {}
 export interface TagObject {
     /** The name of the tag. */
     name: string;
+    /** A short summary for the tag. */
+    summary?: string;
     /** A short description for the tag. */
     description?: string;
     /** Additional external documentation for this tag. */
     externalDocs?: ExternalDocumentationObject;
+    /** Nested subcommand groups. */
+    parent?: string;
+    /** Subcommand grouping logic. */
+    kind?: string;
 }
 
 /**
@@ -418,6 +438,8 @@ export interface DiscriminatorObject {
     propertyName: string;
     /** An object to hold mappings between payload values and schema names or references. */
     mapping?: Record<string, string>;
+    /** Fallback default mapping. */
+    defaultMapping?: string;
 }
 
 /**
@@ -434,6 +456,8 @@ export interface XMLObject {
     attribute?: boolean;
     /** MAY be used only for an array definition. */
     wrapped?: boolean;
+    /** Precise XML DOM mapping controls. */
+    nodeType?: string;
 }
 
 /**
@@ -468,6 +492,8 @@ export interface ComponentsObject {
     callbacks?: Record<string, CallbackObject | ReferenceObject>;
     /** An object to hold reusable Path Item Objects. */
     pathItems?: Record<string, PathItemObject | ReferenceObject>;
+    /** An object to hold reusable Media Type Objects. */
+    mediaTypes?: Record<string, MediaTypeObject | ReferenceObject>;
 }
 
 /**
@@ -475,13 +501,13 @@ export interface ComponentsObject {
  */
 export interface SecuritySchemeObject {
     /** The type of the security scheme. */
-    type: "apiKey" | "http" | "mutualTLS" | "oauth2" | "openIdConnect";
+    type: 'apiKey' | 'http' | 'mutualTLS' | 'oauth2' | 'openIdConnect';
     /** A short description for security scheme. */
     description?: string;
     /** The name of the header, query or cookie parameter to be used. */
     name?: string;
     /** The location of the API key. */
-    in?: "query" | "header" | "cookie";
+    in?: 'query' | 'header' | 'cookie';
     /** The name of the HTTP Authorization scheme to be used in the Authorization header as defined in RFC7235. */
     scheme?: string;
     /** A hint to the client to identify how the bearer token is formatted. */
@@ -490,6 +516,8 @@ export interface SecuritySchemeObject {
     flows?: OAuthFlowsObject;
     /** OpenId Connect URL to discover OAuth2 configuration values. */
     openIdConnectUrl?: string;
+    /** OAuth2 metadata discovery. */
+    oauth2MetadataUrl?: string;
 }
 
 /**
@@ -504,6 +532,8 @@ export interface OAuthFlowsObject {
     clientCredentials?: OAuthFlowObject;
     /** Configuration for the OAuth Authorization Code flow. */
     authorizationCode?: OAuthFlowObject;
+    /** Support for the Device Authorization grant flow. */
+    deviceAuthorization?: OAuthFlowObject;
 }
 
 /**
@@ -518,6 +548,8 @@ export interface OAuthFlowObject {
     refreshUrl?: string;
     /** The available scopes for the OAuth2 security scheme. */
     scopes: Record<string, string>;
+    /** URL to be used for device flow authentication. */
+    deviceAuthorizationUrl?: string;
 }
 
 /**

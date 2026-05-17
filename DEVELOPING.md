@@ -2,7 +2,7 @@
 
 ![Test Coverage](https://img.shields.io/badge/Test_Coverage-100%25-brightgreen.svg) ![Doc Coverage](https://img.shields.io/badge/Doc_Coverage-100%25-brightgreen.svg)
 
-This guide outlines how to set up the development environment, make changes, run tests, and test the generated site locally.
+This guide outlines how to set up the development environment, make changes, run tests, and test the generated outputs locally.
 
 ## Prerequisites
 
@@ -32,82 +32,76 @@ This guide outlines how to set up the development environment, make changes, run
 
 ## Workflow
 
-The project is written in strictly-typed TypeScript within the `src/` directory. The main CLI entrypoint is in `bin/cli.ts`.
+The project is written in strictly-typed TypeScript within the `src/` directory. It is a dual-mode tool outputting both a CLI (`dist/cli.js`) and a client-side bundle (`dist/bundle.js`).
 
 ### Project Structure
 
-- `bin/`: Executable entrypoints (`cli.ts`, `serve.ts`).
-- `src/`: Core logic (`cli-core.ts`, `generator.ts`, `runner.ts`, `server.ts`, `types.ts`).
-- `src/templates/`: EJS HTML layouts (`layout.ejs`).
-- `tests/`: Jest test files (`*.test.ts`).
-- `example/`: Holds a sample OpenAPI spec (`spec.json`) and the generated output (`public/`).
+- `src/cli.ts`: Executable entrypoint for the AOT static generator.
+- `src/web-component.ts`: Entrypoint for the client-side SPA `<cdd-api-docs>`.
+- `src/aot-generator.ts`: Core HTML generation logic for CLI mode (uses TypeScript string literals and `marked`).
+- `src/parser.ts`: OpenAPI specification parsing logic.
+- `src/runner.ts`: Core logic for executing external `cdd-ctl` processes.
+- `src/types.ts` & `src/openapi-types.ts`: Strict typings for the project.
+- `tests/`: Vitest test files (`*.spec.ts`).
+- `example/`: Holds sample OpenAPI specs (`spec.json`) and the generated output (`public/`).
+- `test-public/`: Used for integration testing of the Web Component.
 
 ### Making Changes
 
-When making changes, particularly to the generator (`src/generator.ts`) or the template (`src/templates/layout.ejs`), be aware of the 100% test coverage requirement.
+When making changes, particularly to the generator (`src/aot-generator.ts`) or the web component (`src/web-component.ts`), be aware of the 100% test coverage requirement.
 
 1. **Write your code.**
-2. **Update the corresponding `*.test.ts` files** in the `tests/` directory to cover the new branches or logic.
-3. Ensure no `any` or `unknown` types are introduced; strictly define interfaces in `src/types.ts`.
+2. **Update the corresponding `*.spec.ts` files** in the `tests/` directory to cover the new branches or logic.
+3. Ensure no `any` or `unknown` types are introduced; strictly define interfaces.
 
 ### Building and Testing
 
 The `package.json` includes several scripts to streamline development.
 
-- **Build the project:** transpiles TypeScript to `dist/` and copies the `src/templates/` folder.
+- **Build the project:** uses `esbuild` to transpile TypeScript to `dist/bundle.js` and `dist/cli.js`.
 
     ```bash
     npm run build
     ```
 
-- **Run Tests:** Executes Jest and asserts 100% coverage across all metrics.
+- **Run Tests:** Executes Vitest and asserts 100% coverage across all metrics.
 
     ```bash
     npm run test
     ```
 
-- **Generate Example Output:** Uses the internal CLI to parse `example/spec.json` and outputs the static site to `example/public/`. This automatically runs the `build` script first.
+- **Generate Example Output (AOT Mode):** Uses the internal CLI to parse `example/spec.json` and outputs the static site to `example/public/`. This automatically runs the `build` script first.
 
     ```bash
     npm start
     ```
 
-- **Preview the Site locally:** Starts an Express server on `http://localhost:8000` to serve the generated `example/public/` folder.
+- **Preview the Site locally:** Uses `serve` to run a local server on the generated `example/public/` folder.
     ```bash
     npm run serve
     ```
 
 ## Working with CDD Tools
 
-The `runner.ts` module attempts to execute the `to_docs_json` command on your system for 13 different languages via the unified `./cdd-ctl` binary.
+The `runner.ts` module attempts to execute the `to_docs_json` command on your system for 13 different languages via the unified `cdd-ctl` binary.
 
 For example:
 
-- `./cdd-ctl c to_docs_json -i <path>`
-- `./cdd-ctl cpp to_docs_json -i <path>`
-- `./cdd-ctl csharp to_docs_json -i <path>`
-- `./cdd-ctl go to_docs_json -i <path>`
-- `./cdd-ctl java to_docs_json -i <path>`
-- `./cdd-ctl kotlin to_docs_json -i <path>`
-- `./cdd-ctl php to_docs_json -i <path>`
-- `./cdd-ctl python-all to_docs_json -i <path>`
-- `./cdd-ctl ruby to_docs_json -i <path>`
-- `./cdd-ctl rust to_docs_json -i <path>`
-- `./cdd-ctl sh to_docs_json -i <path>`
-- `./cdd-ctl swift to_docs_json -i <path>`
-- `./cdd-ctl ts to_docs_json -i <path>`
+- `cdd-ctl python-all to_docs_json -i <path>`
+- `cdd-ctl go to_docs_json -i <path>`
+- etc.
 
-For every language, it runs four permutations to support checkboxes in the UI:
+For every language, it runs four permutations to support formatting checkboxes:
 
 1. `(default)`
 2. `--no-imports`
 3. `--no-wrapping`
 4. `--no-imports --no-wrapping`
 
-**If you do not have this tool installed globally**, the runner will catch the `Command failed` errors, log a `[WARN]`, and automatically generate mock text like:
-`FAILED CLI COMMAND ./cdd-ctl python-all (variant: noImports)`
+**If you do not have this tool installed globally**, the runner will catch the errors, log a `[WARN]`, and automatically generate mock text like:
+`FAILED CLI COMMAND cdd-ctl python-all (variant: noImports)`
 
-This graceful degradation ensures you can still test the UI layout, JavaScript interactivity, and templating engine without needing a massive toolchain installed locally.
+This graceful degradation ensures you can still test the UI layout and interactivity without needing a massive toolchain installed locally.
 
 ## Releasing Changes
 

@@ -2,7 +2,7 @@
 
 ![Test Coverage](https://img.shields.io/badge/Test_Coverage-100%25-brightgreen.svg) ![Doc Coverage](https://img.shields.io/badge/Doc_Coverage-100%25-brightgreen.svg)
 
-This document describes the high-level architecture of `cdd-docs-ui`, a CLI tool that parses OpenAPI specifications and generates a purely static, server-side rendered (SSR) API documentation website with progressive enhancement for interactive code examples.
+This document describes the high-level architecture of `cdd-docs-ui`, a dual-mode documentation tool that parses OpenAPI specifications and generates either a purely static, server-side rendered (SSR) API documentation website, or acts as a client-side Custom Web Component Single Page Application (SPA).
 
 ## Architecture Diagram
 
@@ -26,83 +26,82 @@ flowchart TD
     classDef terminal font-family:'Google Sans Medium',fill:#20344b,color:#57caff,stroke:#57caff,stroke-width:2px
 
     A[OpenAPI Spec]:::subhead
-    B(cdd-docs-ui JS Runner):::headline
+    B(AOT CLI Generator):::headline
+    B2(Web Component SPA):::headline
     C{cdd-ctl Rust CLI}:::highlight
     D[[13 Language Targets]]:::bodytext
     E[Static HTML Site]:::terminal
+    F[Dynamic Browser UI]:::terminal
 
     A -- Parses --> B
+    A -- Parses --> B2
     B -- Executes --> C
     C -- Routes to --> D
     D -- JSON Snippets --> B
     B -- Renders --> E
+    B2 -- Renders --> F
 ```
 
 ## Core Concepts
 
-1. **Static Site Generation (SSG) with Graceful Degradation:**
-   The primary goal is to generate static HTML files. Every endpoint and language combination has a dedicated URL (e.g., `/api/petstore/go/index.html`). This ensures the documentation works perfectly without JavaScript enabled, is highly SEO-friendly, and loads instantaneously.
+1. **Static Site Generation (AOT Mode) with Graceful Degradation:**
+   The CLI generates static HTML files. Every endpoint and language combination can have a dedicated structure. This ensures the documentation works perfectly without JavaScript enabled, is highly SEO-friendly, and loads instantaneously. It relies on pure TypeScript string literals and `marked` for HTML rendering, eschewing heavier template engines like EJS.
 
-2. **Progressive Enhancement:**
-   For users with JavaScript enabled, the static site hydrates into a single-page application (SPA) experience for the code examples. Changing languages or toggling code snippet formatting (imports/wrapping) dynamically swaps the code content via DOM manipulation using a pre-fetched `examples.json` file, avoiding full page reloads.
+2. **Client-Side SPA (Web Component Mode):**
+   The project exports a Custom Web Component (`<cdd-api-docs>`) that can be embedded in any frontend (like the `cdd-web-ui`). It dynamically renders an OpenAPI spec in the browser. It supports `postMessage` integration to sync states (like themes and real-time spec updates) with parent frames.
 
 3. **External Code Generation via `cdd-ctl` Toolchain:**
-   Instead of reinventing code generators, this tool shells out to the existing `cdd-ctl` Rust CLI tool. It passes the OpenAPI spec to this amalgamation tool and expects JSON payloads containing the generated code examples for a requested target language.
+   In AOT mode, the tool shells out to the `cdd-ctl` Rust CLI tool. It passes the OpenAPI spec to this amalgamation tool and expects JSON payloads containing the generated code examples for a requested target language. The frontend UI is then self-contained with these snippets.
 
 ## Component Breakdown
 
 The application is built in TypeScript and consists of the following primary modules:
 
-### 1. CLI Core (`src/cli-core.ts`)
+### 1. CLI Core (`src/cli.ts`)
 
-Uses `commander` to parse command-line arguments. It acts as the entry point, collecting the input specification path, output directory path, and default snippet formatting options (`--no-imports`, `--no-wrapping`), before passing control to the Generator.
+Uses `commander` to parse command-line arguments. It acts as the entry point for the AOT mode, collecting the input specification path, output directory path, and passing control to the AOT Generator.
 
-### 2. Generator (`src/generator.ts`)
+### 2. AOT Generator (`src/aot-generator.ts`)
 
-The orchestrator of the SSG process.
+The orchestrator of the Static Site Generation process.
 
 - **Parsing:** Reads the OpenAPI `spec.json`.
 - **Navigation Construction:** Parses the `paths` object in the OpenAPI spec to build a structured navigation tree (methods, paths, summaries).
 - **Data Aggregation:** Calls the `runner` to execute the external CDD tools and collect code examples.
-- **HTML Rendering:** Uses `ejs` (Embedded JavaScript templating) to render the `src/templates/layout.ejs` file. It iterates over every supported language to generate language-specific `index.html` files.
-- **Asset Emission:** Writes the static CSS (`styles.css`) and the aggregated `examples.json` file to the output directory.
+- **HTML Rendering:** Uses pure TypeScript string literals and `marked` to render the static HTML layouts. It iterates over the data to generate the final markup.
+- **Asset Emission:** Writes the static assets to the output directory.
 
 ### 3. Runner (`src/runner.ts`)
 
 Responsible for interacting with the operating system and external processes.
 
-- **Process Execution:** Uses `child_process.exec` to run commands like `./cdd-ctl python-all to_docs_json -i spec.json`.
-- **Variant Generation:** For every language, it executes the CDD tool four times to generate all possible permutations of snippet formatting:
-    1. Default (Full code)
-    2. `--no-imports`
-    3. `--no-wrapping`
-    4. `--no-imports` and `--no-wrapping`
-- **Fallback Mocking:** If the `cdd-ctl` tool is not installed or fails, the runner gracefully degrades by generating mock text (e.g., `FAILED CLI COMMAND ./cdd-ctl go (variant: noImports)`). This ensures the documentation UI can still be generated and tested even if the underlying code generator is broken.
+- **Process Execution:** Uses `child_process.exec` to run commands like `cdd-ctl python-all to_docs_json -i spec.json`.
+- **Fallback Mocking:** If the `cdd-ctl` tool is not installed or fails, the runner gracefully degrades by generating mock text. This ensures the documentation UI can still be generated and tested even if the underlying code generator is unavailable.
 
-### 4. Templating (`src/templates/layout.ejs`)
+### 4. Web Component SPA (`src/web-component.ts`)
 
-The single HTML template defining the structure of the documentation.
+The client-side entry point for the single-page application mode.
 
-- **Layout:** Implements a responsive, two-column layout (sidebar navigation and main content area) inspired by Material Design 3.
-- **Static Content:** Loops through the OpenAPI paths to render endpoint descriptions, parameters, request bodies, and responses directly into HTML.
-- **Interactive Logic:** Contains a vanilla `<script>` block that:
-    - Fetches `/examples.json` on load.
-    - Intercepts dropdown (`<select>`) and checkbox (`<input type="checkbox">`) changes.
-    - Updates the browser URL (`window.history.pushState`) when the language changes.
-    - Mutates the DOM (`<code>` tags) with the appropriate code snippet based on the selected language and formatting variants.
+- **Custom Element:** Defines `<cdd-api-docs>`, a web component.
+- **postMessage Listener:** Listens for `UPDATE_SPEC` and `SET_THEME` messages from a parent window to dynamically update the rendered documentation and apply light/dark styling.
+- **Dynamic Rendering:** Parses the passed OpenAPI spec on the fly and updates the DOM without needing a Node.js backend.
 
-### 5. Types (`src/types.ts`)
+### 5. Types (`src/types.ts` & `src/openapi-types.ts`)
 
-Enforces strict TypeScript interfaces for all internal structures, including CLI options, OpenAPI Schema shapes (`OpenAPISpec`, `OpenAPIEndpoint`), and the expected output structures from the CDD tools (`AllExamples`, `CDDOutput`).
+Enforces strict TypeScript interfaces for all internal structures, including CLI options, OpenAPI Schema shapes (`OpenAPISpec`, `OpenAPIEndpoint`), and the expected output structures from the CDD tools.
 
-## Data Flow
+## Data Flow (AOT CLI)
 
-1. User executes `cdd-docs-ui -i spec.json -o build/`.
-2. `cli-core.ts` parses the arguments.
-3. `generator.ts` reads `spec.json`.
-4. `runner.ts` executes `./cdd-ctl` tool target commands to generate code examples for all languages and variants.
-5. Code examples are aggregated into an `AllExamples` object in memory.
-6. `generator.ts` writes `AllExamples` to `build/examples.json`.
-7. `generator.ts` renders `layout.ejs` for each language (e.g., Python, Go) using the parsed spec and the `AllExamples` object to populate the initial HTML state.
-8. Static HTML files and `styles.css` are written to the `build/` directory.
-9. When a user opens `build/index.html` in a browser, the vanilla JS in `layout.ejs` fetches `examples.json` and takes over interactivity.
+1. User executes `cdd-docs-cli -i spec.json -o build/`.
+2. `cli.ts` parses the arguments.
+3. `aot-generator.ts` reads `spec.json`.
+4. `runner.ts` executes `cdd-ctl` tool target commands to generate code examples for all languages and variants.
+5. Code examples are aggregated in memory.
+6. `aot-generator.ts` renders the HTML pages using TS literals and writes them to the `build/` directory alongside `styles.css`.
+
+## Data Flow (Web Component SPA)
+
+1. A parent application (e.g., `cdd-web-ui`) imports `bundle.js` and embeds `<cdd-api-docs></cdd-api-docs>`.
+2. The component initializes and posts a `DOCS_UI_READY` message to the parent window.
+3. The parent window posts an `UPDATE_SPEC` message with the OpenAPI string.
+4. The component parses the spec and dynamically renders the layout.

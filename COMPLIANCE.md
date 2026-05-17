@@ -11,18 +11,18 @@ The project is written exclusively in TypeScript and compiles under the strictes
 - **No Implicit `any`:** `noImplicitAny: true` is enforced globally. No variable or parameter may lack an explicit type definition.
 - **No `unknown` types:** Code should be strongly typed using domain-specific interfaces (e.g., `OpenAPISpec`, `CDDOutput`) rather than relying on generic placeholders.
 - **Strict Null Checks:** `strictNullChecks: true` is enabled. All potential `null` or `undefined` values must be handled explicitly.
-- **Complete Type Definitions:** All complex objects (like OpenAPI schemas and CLI options) are strictly defined in `src/types.ts`.
+- **Complete Type Definitions:** All complex objects (like OpenAPI schemas and CLI options) are strictly defined in `src/types.ts` or `src/openapi-types.ts`.
 
 ## Code Coverage
 
-The project maintains a rigorous 100% test coverage threshold across all metrics:
+The project maintains a rigorous 100% test coverage threshold across all metrics using Vitest:
 
 - **Statements:** 100%
 - **Branches:** 100%
 - **Functions:** 100%
 - **Lines:** 100%
 
-Every function, conditional branch, error catch block, and module execution path must be covered by unit tests using Jest. Pull requests must pass the `npm run test` script without lowering these thresholds.
+Every function, conditional branch, error catch block, and module execution path must be covered by unit tests. Pull requests must pass the `npm run test` script without lowering these thresholds.
 
 ## Documentation
 
@@ -31,8 +31,7 @@ Every function, conditional branch, error catch block, and module execution path
 
 ## Dependencies
 
-- The project limits its runtime dependencies to essential libraries (`commander`, `ejs`, `express`, `fs-extra`) to minimize surface area for vulnerabilities.
-- `express` is used strictly as an optional development dependency/script for local previewing (`npm run serve`) and is not required for the core CLI functionality.
+- The project limits its runtime dependencies to essential libraries (`commander`, `lit`, `marked`, `fs-extra`) to minimize surface area for vulnerabilities. It eschews heavier template engines like `ejs` in favor of TypeScript string literals.
 
 ## Security Practices
 
@@ -40,8 +39,8 @@ Every function, conditional branch, error catch block, and module execution path
 - **Graceful Error Handling:** Process execution errors (like an unavailable external CDD tool) are caught gracefully, logging a warning rather than crashing the generation process, and substituting mock code to ensure the UI remains testable.
 - **Child Process Execution:** The `runner.ts` module uses `child_process.exec` securely, strictly passing predefined commands combined with file paths. No unvalidated user input is passed directly to the shell executor.
 
-## Frontend (Generated Site)
+## Frontend (Generated Site & Web Component)
 
-- **Vanilla JavaScript:** The generated website relies purely on Vanilla JS for interactivity (no React, Vue, or Angular required) to minimize the final output size and guarantee long-term maintainability.
-- **Progressive Enhancement:** The site must be fully usable with JavaScript disabled. All interactive elements (dropdowns) have native HTML fallback behaviors (e.g., standard HTTP navigation between pre-generated language subdirectories).
+- **Lit & Vanilla JS:** The Client-Side SPA relies on `lit` and vanilla DOM APIs to guarantee long-term maintainability.
+- **Progressive Enhancement:** The AOT generated site must be fully usable with JavaScript disabled. All interactive elements have native HTML fallback behaviors.
 - **CSS Architecture:** Uses Vanilla CSS with CSS Variables (`:root`) themed around Material Design 3 guidelines for consistency and responsiveness. No heavy CSS frameworks (like Tailwind or Bootstrap) are used.

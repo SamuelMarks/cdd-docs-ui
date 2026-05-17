@@ -75,3 +75,12 @@ public/
 
 # macOS specific temp files
 *.DS_Store
+
+# Temporary test scripts and dummy data
+/test-*
+/bundle-*
+/petstore*
+*.tmp
+*.temp
+tmp/
+temp/

@@ -2,9 +2,42 @@
 
 ![Test Coverage](https://img.shields.io/badge/Test_Coverage-100%25-brightgreen.svg) ![Doc Coverage](https://img.shields.io/badge/Doc_Coverage-100%25-brightgreen.svg)
 
-This document details how to use the `cdd-docs-ui` CLI to generate interactive, multi-language API documentation websites from OpenAPI specifications.
+This document details how to use `cdd-docs-ui` in both of its operational modes: as an AOT CLI tool, or as a Web Component SPA.
 
-## Global Installation
+## 1. Web Component SPA Mode (Client-Side)
+
+The `cdd-docs-ui` can be used as a client-side Custom Web Component `<cdd-api-docs>`. This is the preferred mode for integrating with dynamic frontends like `cdd-web-ui`.
+
+### Setup
+
+Include the compiled `bundle.js` in your HTML:
+
+```html
+<script type="module" src="path/to/dist/bundle.js"></script>
+```
+
+Then use the element in your DOM:
+
+```html
+<cdd-api-docs></cdd-api-docs>
+```
+
+### `postMessage` API
+
+The component communicates with its host iframe window via `postMessage`.
+
+**From Component to Host:**
+- `{ type: 'DOCS_UI_READY' }`: Fired when the component has mounted and is ready to receive data.
+
+**From Host to Component:**
+- `{ type: 'UPDATE_SPEC', payload: '<openapi_yaml_or_json>' }`: Parses the provided string and updates the documentation view.
+- `{ type: 'SET_THEME', payload: 'dark' | 'light' }`: Toggles the CSS theme variables.
+
+## 2. AOT CLI Mode (Server-Side/Static)
+
+The CLI generates interactive, multi-language API documentation websites from OpenAPI specifications, running external toolchains ahead of time.
+
+### Global Installation
 
 To use the tool globally on your system, install it via `npm` from the package root:
 
@@ -12,15 +45,14 @@ To use the tool globally on your system, install it via `npm` from the package r
 npm install -g .
 ```
 
-You can now run `cdd-docs-ui` from any directory.
+You can now run `cdd-docs-cli` from any directory.
 
-## Basic Generation
+### Basic Generation
 
 The most basic command takes an OpenAPI specification file and outputs the generated website to a specified directory.
-By default, the CLI looks for `spec.json` in the current directory and outputs to `public/`.
 
 ```bash
-cdd-docs-ui -i myspec.json -o build/
+cdd-docs-cli -i myspec.json -o build/
 ```
 
 ### Options Explained
@@ -31,55 +63,19 @@ cdd-docs-ui -i myspec.json -o build/
 - `-o, --output <path>`
     - Specifies the target directory for the generated static site. It will be emptied before generation.
     - _Default:_ `public`
-- `--no-imports`
-    - Defines the **default state** of the website's initial load. The generated static HTML files will omit import statements in their code examples.
-    - Users can still toggle imports on/off via the UI checkbox.
-- `--no-wrapping`
-    - Defines the **default state** of the website's initial load. The generated static HTML files will omit function/class wrapping in their code examples.
-    - Users can still toggle wrapping on/off via the UI checkbox.
 
-### Generating with Default States
+## Supported Toolchain Repositories (AOT Mode)
 
-If you want the deployed website to default to showing bare snippets (no imports, no wrapping) when a user first lands on the page, use the flags during generation:
+The AOT CLI integrates by shelling out to `cdd-ctl` which supports 13 `cdd` targets (e.g., `cdd-python-all`, `cdd-ts`, `cdd-go`, etc.).
 
-```bash
-cdd-docs-ui -i openapi.json -o out/site --no-imports --no-wrapping
-```
+These must be integrated into `cdd-ctl` and the binary must be available in your path for the generator to insert real code snippets. If they are missing or fail, mock fallback data is generated.
 
-_Note: The generator still runs all 4 CDD tools variants in the background to build `examples.json`, ensuring the interactive UI checkboxes still work perfectly._
+## Serving the AOT Output
 
-## Supported Toolchain Repositories
-
-This CLI integrates by shelling out to `cdd-ctl` which supports the following 13 `cdd` targets:
-
-- [cdd-c](https://github.com/SamuelMarks/cdd-c) (`c`)
-- [cdd-cpp](https://github.com/SamuelMarks/cdd-cpp) (`cpp`)
-- [cdd-csharp](https://github.com/SamuelMarks/cdd-csharp) (`csharp`)
-- [cdd-go](https://github.com/SamuelMarks/cdd-go) (`go`)
-- [cdd-java](https://github.com/SamuelMarks/cdd-java) (`java`)
-- [cdd-kotlin](https://github.com/offscale/cdd-kotlin) (`kotlin`)
-- [cdd-php](https://github.com/SamuelMarks/cdd-php) (`php`)
-- [cdd-python-all](https://github.com/offscale/cdd-python-all) (`python-all`)
-- [cdd-ruby](https://github.com/SamuelMarks/cdd-ruby) (`ruby`)
-- [cdd-rust](https://github.com/SamuelMarks/cdd-rust) (`rust`)
-- [cdd-sh](https://github.com/SamuelMarks/cdd-sh) (`sh`)
-- [cdd-swift](https://github.com/SamuelMarks/cdd-swift) (`swift`)
-- [cdd-ts](https://github.com/offscale/cdd-ts) (`ts`)
-
-These must be integrated into `cdd-ctl` and the binary must be available in your path or current directory for the generator to insert real code snippets. If they are missing or fail, mock fallback data is generated.
-
-## Serving the Output
-
-The output is purely static HTML, CSS, and JSON. You can deploy the `output` directory to any static hosting provider (e.g., GitHub Pages, AWS S3, Vercel, Netlify).
+The output is purely static HTML and CSS. You can deploy the `output` directory to any static hosting provider (e.g., GitHub Pages, AWS S3, Vercel, Netlify).
 
 To preview it locally, use any static file server:
 
 ```bash
 npx serve build/
-```
-
-Or use the built-in development server in the repository:
-
-```bash
-npm run serve
 ```

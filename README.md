@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/SamuelMarks/cdd-docs-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/SamuelMarks/cdd-docs-ui/actions/workflows/ci.yml)
 
-A strictly-typed TypeScript CLI tool for generating static, progressively-enhanced API documentation websites based on OpenAPI specifications and code snippets from the `cdd` (Compiler Driven Development) toolchain.
+A strictly-typed TypeScript dual-mode documentation tool for generating API documentation based on OpenAPI specifications and code snippets from the `cdd` (Compiler Driven Development) toolchain. It can operate as an AOT (Ahead-of-Time) static site generator or as a client-side Custom Web Component Single Page Application (SPA).
 
 ## Architecture Diagram
 
@@ -28,34 +28,40 @@ flowchart TD
     classDef terminal font-family:'Google Sans Medium',fill:#20344b,color:#57caff,stroke:#57caff,stroke-width:2px
 
     A[OpenAPI Spec]:::subhead
-    B(cdd-docs-ui JS Runner):::headline
+    B(AOT CLI Generator):::headline
+    B2(Web Component SPA):::headline
     C{cdd-ctl Rust CLI}:::highlight
     D[[13 Language Targets]]:::bodytext
     E[Static HTML Site]:::terminal
+    F[Dynamic Browser UI]:::terminal
 
     A -- Parses --> B
+    A -- Parses --> B2
     B -- Executes --> C
     C -- Routes to --> D
     D -- JSON Snippets --> B
     B -- Renders --> E
+    B2 -- Renders --> F
 ```
 
 ## Features
 
+- **Dual-Mode Architecture:** Can be used as a CLI tool (`cdd-docs-cli`) to generate purely static HTML using TypeScript string literals and `marked`, or as a browser-native Web Component (`<cdd-api-docs>`).
 - **100% Test Coverage:** Rigorously tested core logic.
 - **Strict TypeScript:** No `any` or `unknown` types.
-- **Progressive Enhancement:** Generates pure static HTML for fast load times and SEO. Enhances with Vanilla JS for dynamic, no-reload language switching.
-- **Variant Support:** Supports and dynamically renders snippets with or without imports and code-wrapping.
-- **Material 3 Theming:** Responsive, modern design out of the box.
+- **Progressive Enhancement (AOT Mode):** Generates pure static HTML for fast load times and SEO. Enhances with Vanilla JS for dynamic, no-reload language switching.
+- **postMessage Integration (SPA Mode):** The client-side Web Component seamlessly integrates with parent iframes (like `cdd-web-ui`), reacting to live spec changes and theme toggles.
+- **Variant Support:** Supports and dynamically renders snippets with or without imports and code-wrapping via the underlying `cdd-ctl` integrations.
+- **Material 3 Theming:** Responsive, modern design out of the box with vanilla CSS.
 
 ## Architecture & Development
 
 For detailed information on how the tool is structured, how to develop locally, and compliance standards, refer to the following guides:
 
-- [ARCHITECTURE.md](ARCHITECTURE.md): An overview of the SSG process and component architecture.
+- [ARCHITECTURE.md](ARCHITECTURE.md): An overview of the dual-mode architecture, AOT generation, and Web Component integration.
 - [COMPLIANCE.md](COMPLIANCE.md): Standards for TypeScript strictness, test coverage, and security.
 - [DEVELOPING.md](DEVELOPING.md): Instructions on how to build, test, and contribute.
-- [USAGE.md](USAGE.md): Detailed CLI options and usage instructions.
+- [USAGE.md](USAGE.md): Detailed CLI options and Web Component usage instructions.
 
 ## Installation
 
@@ -66,13 +72,13 @@ npm install
 npm run build
 ```
 
-To install globally:
+To install the CLI globally:
 
 ```bash
 npm install -g .
 ```
 
-## Quick Start Example
+## Quick Start Example (AOT CLI)
 
 This repository includes a sample Petstore `spec.json`.
 
@@ -90,4 +96,4 @@ _Note: If you don't have the underlying `cdd-ctl` binary installed globally, the
 npm run serve
 ```
 
-Navigate to `http://localhost:8000` to view the generated documentation and test the interactive language dropdown and formatting checkboxes.
+Navigate to `http://localhost:8000` (or whichever port `serve` selects) to view the generated documentation and test the interactive language dropdown and formatting checkboxes.

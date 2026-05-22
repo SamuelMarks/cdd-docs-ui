@@ -45,6 +45,10 @@ lerna-debug.log*
 cdd-ctl
 *.html
 
+# Generated conformance docs
+compliance-*/
+openapi-*/
+
 # Example outputs
 example/public/
 public/

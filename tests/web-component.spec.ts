@@ -693,6 +693,17 @@ it("should handle empty wrapping proxy", async () => { document.body.innerHTML =
         el.sdkExamples = '[{"endpoints":{"/test2":{"post":"test code 2"}}}]';
         expect(el.sdkExamples).toHaveLength(1);
         expect(el.sdkExamples[0].filepath).toBe('_test2_post');
+
+        // Test passing CodeExample wrapping JSON
+        el.sdkExamples = [{
+            language: 'python',
+            filepath: 'docs.json',
+            content: '{"endpoints":{"/test3":{"put":"test python code"}}}'
+        }];
+        expect(el.sdkExamples).toHaveLength(1);
+        expect(el.sdkExamples[0].language).toBe('python');
+        expect(el.sdkExamples[0].filepath).toBe('_test3_put');
+        expect(el.sdkExamples[0].content).toBe('test python code');
         
         el.sdkExamples = 'invalid json';
         expect(el.sdkExamples).toHaveLength(0);

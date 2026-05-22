@@ -14,7 +14,10 @@ let watchMode = false;
 let port = 3000;
 
 for (let i = 0; i < args.length; i++) {
-    if (args[i] === '-i' || args[i] === '--input') {
+    if (args[i] === '-v' || args[i] === '--version') {
+        console.log('0.0.1');
+        process.exit(0);
+    } else if (args[i] === '-i' || args[i] === '--input') {
         inputSpec = args[++i] || '';
     } else if (args[i] === '-o' || args[i] === '--output') {
         outputDir = args[++i] || '';

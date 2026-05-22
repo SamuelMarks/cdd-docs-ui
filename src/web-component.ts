@@ -254,25 +254,56 @@ export class CDDApiDocs extends HTMLElement {
         if (val && typeof val === 'object' && !Array.isArray(val) && 'endpoints' in val) {
              val = [val as any];
         }
-        
-        if (Array.isArray(val) && val.length > 0 && 'endpoints' in (val[0] || {})) {
-             const outputs = val as any[];
-             const examples: CodeExample[] = [];
-             for (const output of outputs) {
-                 for (const route of Object.keys(output.endpoints || {})) {
-                      const methods = output.endpoints[route];
-                      for (const method of Object.keys(methods || {})) {
-                          examples.push({
-                              language: 'typescript', // Generic fallback
-                              filepath: route.replace(/[^a-zA-Z0-9]/g, '_') + '_' + method,
-                              content: methods[method],
-                              includeImports: false,
-                              includeWrapping: false
-                          });
-                      }
-                 }
-             }
-             val = examples;
+
+        if (Array.isArray(val)) {
+            const extractedExamples: CodeExample[] = [];
+            for (const item of val) {
+                // Handle CodeExample wrapping a JSON string containing endpoints
+                if (item && item.content && typeof item.content === 'string' && 
+                    (item.filepath?.endsWith('.json') || item.content.includes('"endpoints"'))) {
+                    try {
+                        const parsed = JSON.parse(item.content);
+                        if (parsed && parsed.endpoints) {
+                            for (const route of Object.keys(parsed.endpoints)) {
+                                const methods = parsed.endpoints[route];
+                                for (const method of Object.keys(methods || {})) {
+                                    extractedExamples.push({
+                                        language: item.language || 'typescript',
+                                        filepath: route.replace(/[^a-zA-Z0-9]/g, '_') + '_' + method,
+                                        content: methods[method],
+                                        includeImports: false,
+                                        includeWrapping: false
+                                    });
+                                }
+                            }
+                            continue;
+                        }
+                    } catch (e) {
+                        // Not JSON, fall through
+                    }
+                }
+                
+                // Handle raw CDDOutput objects directly in the array
+                if (item && 'endpoints' in item) {
+                    const output = item as any;
+                    for (const route of Object.keys(output.endpoints || {})) {
+                        const methods = output.endpoints[route];
+                        for (const method of Object.keys(methods || {})) {
+                            extractedExamples.push({
+                                language: 'typescript', // Generic fallback
+                                filepath: route.replace(/[^a-zA-Z0-9]/g, '_') + '_' + method,
+                                content: methods[method],
+                                includeImports: false,
+                                includeWrapping: false
+                            });
+                        }
+                    }
+                    continue;
+                }
+
+                extractedExamples.push(item);
+            }
+            val = extractedExamples;
         }
 
         this._sdkExamples = Array.isArray(val) ? val as CodeExample[] : [];

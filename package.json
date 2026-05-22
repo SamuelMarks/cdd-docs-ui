@@ -9,7 +9,7 @@
         "serve": "npx serve example/public",
         "build": "esbuild src/web-component.ts --bundle --outfile=dist/bundle.js --format=esm && esbuild src/cli.ts --bundle --outfile=dist/cli.js --platform=node",
         "prestart": "npm run build",
-        "prepare": "husky"
+        "prepare": "echo no-husky"
     },
     "keywords": [],
     "author": "",

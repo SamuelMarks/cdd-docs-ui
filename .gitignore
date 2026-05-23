@@ -42,8 +42,8 @@ lerna-debug.log*
 .vitest/
 
 # Project specific artifacts & binary
-cdd-ctl
-*.html
+# cdd-ctl
+# *.html
 
 # Generated conformance docs
 compliance-*/
@@ -81,9 +81,9 @@ public/
 *.DS_Store
 
 # Temporary test scripts and dummy data
-/test-*
-/bundle-*
-/petstore*
+# /test-*
+# /bundle-*
+# /petstore*
 *.tmp
 *.temp
 tmp/

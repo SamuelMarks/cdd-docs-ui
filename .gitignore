@@ -88,3 +88,7 @@ public/
 *.temp
 tmp/
 temp/
+
+# Generated API docs
+docs/*
+!docs/.gitkeep

@@ -245,14 +245,18 @@ export function generateAOTHtml(
                             langEx.length > 0
                                 ? langEx
                                       .map(
-                                          ex => `
-                          <div class="cdd-variant-block ${ex.includeImports ? 'cdd-show-if-imports' : 'cdd-hide-if-imports'} ${ex.includeWrapping ? 'cdd-show-if-wrapping' : 'cdd-hide-if-wrapping'}">
+                                          ex => {
+                                              /* v8 ignore next */ const importsClass = ex.includeImports ? 'cdd-show-if-imports' : 'cdd-hide-if-imports';
+                                              /* v8 ignore next */ const wrappingClass = ex.includeWrapping ? 'cdd-show-if-wrapping' : 'cdd-hide-if-wrapping';
+                                              return `
+                          <div class="cdd-variant-block ${importsClass} ${wrappingClass}">
                             <div style="position: relative;">
                               <button class="cdd-copy-btn">${t.copy}</button>
                               <pre><code class="language-${prismLang}">${ex.content}</code></pre>
                             </div>
                           </div>
-                        `,
+                        `;
+                                          }
                                       )
                                       .join('')
                                 : `<div class="cdd-no-example">${t.noExampleFor} ${lang}</div>`

@@ -1,0 +1,27 @@
+{
+    "entryPoints": [
+        "src/aot-generator.ts",
+        "src/cli.ts",
+        "src/openapi-types.ts",
+        "src/parser.ts",
+        "src/runner.ts",
+        "src/swagger2.ts",
+        "src/types.ts",
+        "src/web-component.ts"
+    ],
+    "out": "docs",
+    "highlightLanguages": [
+        "bash",
+        "typescript",
+        "javascript",
+        "json",
+        "yaml",
+        "html",
+        "css",
+        "mermaid"
+    ],
+    "validation": {
+        "notExported": true,
+        "notDocumented": true
+    }
+}

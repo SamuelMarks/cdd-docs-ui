@@ -233,19 +233,35 @@ export class CDDApiDocs extends HTMLElement {
         super();
     }
 
+    /**
+     * Gets the current custom translations applied to the UI.
+     * @returns A partial DocTranslations object
+     */
     get translations() {
         return this._translations;
     }
 
+    /**
+     * Sets custom translations for the UI and triggers a re-render.
+     * @param val A partial DocTranslations object
+     */
     set translations(val: Partial<DocTranslations>) {
         this._translations = val;
         this.triggerRender();
     }
 
+    /**
+     * Gets the current list of SDK examples.
+     * @returns Array of CodeExample objects
+     */
     get sdkExamples() {
         return this._sdkExamples;
     }
 
+    /**
+     * Sets the SDK examples. Automatically parses JSON strings or standardizes format, then triggers re-render.
+     * @param val Examples configuration array, string, or object.
+     */
     set sdkExamples(val: CodeExample[] | string | CDDOutput | CDDOutput[]) {
         if (typeof val === 'string') {
             try { val = JSON.parse(val); } catch (e) { val = []; }
@@ -310,6 +326,9 @@ export class CDDApiDocs extends HTMLElement {
         this.triggerRender();
     }
 
+    /**
+     * Called when the element is inserted into the DOM.
+     */
     connectedCallback() {
         // If we have inner HTML already, just initialize it (Progressive Enhancement)
         if (this.innerHTML.trim() && this.querySelector('.cdd-layout')) {
@@ -420,10 +439,19 @@ export class CDDApiDocs extends HTMLElement {
         }
     }
 
+    /**
+     * List of attributes to observe for changes.
+     */
     static get observedAttributes() {
         return ['spec', 'spec-content', 'theme'];
     }
 
+    /**
+     * Called when an observed attribute is changed.
+     * @param name The name of the attribute
+     * @param oldValue The old value
+     * @param newValue The new value
+     */
     attributeChangedCallback(name: string, oldValue: string, newValue: string) {
         if (oldValue !== newValue) {
             this.triggerRender();

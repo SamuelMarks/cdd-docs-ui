@@ -25,6 +25,10 @@ export interface CodeExample {
  * Expected JSON output structure from cdd-ctl
  */
 export interface CDDOutput {
+    /** 
+     * Map of endpoints where the key is the route path.
+     * The value is a map of HTTP methods to generated code string snippets.
+     */
     endpoints: {
         [path: string]: {
             [method: string]: string;

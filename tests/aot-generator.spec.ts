@@ -589,7 +589,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", operations: [], filepath: "a"}]); });
+`, [{language: "javascript", operations: [], filepath: "a"}] as any); });
 
 it("should cover empty required prop in object", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -621,7 +621,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{path: ""}]}]); });
+`, [{language: "javascript", files: [{path: ""}]}] as any); });
 
 it("should cover variant examples 3", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -631,7 +631,7 @@ paths:
     get:
       description: d
       operationId: a
-`, [{language: "javascript", files: [{filepath: "a", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "a", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 4", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -640,7 +640,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "_p_get", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "_p_get", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 5", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -649,7 +649,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "_p_get2", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "_p_get2", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 6", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -658,7 +658,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "_p_", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "_p_", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 7", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -667,7 +667,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "_get", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "_get", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 8", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -676,7 +676,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 9", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -685,7 +685,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "_p", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "_p", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 10", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -694,7 +694,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "_get", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "_get", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 11", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -703,7 +703,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 12", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -712,7 +712,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "_p", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "_p", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 13", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -721,7 +721,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "_p_get_", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "_p_get_", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 14", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -730,7 +730,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 15", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -739,7 +739,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "", path: "p_get", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "", path: "p_get", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 16", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -748,7 +748,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "", path: "p_get", content: new TextEncoder().encode("x")}], includeImports: true, includeWrapping: false}]); });
+`, [{language: "javascript", files: [{filepath: "", path: "p_get", content: new TextEncoder().encode("x")}], includeImports: true, includeWrapping: false}] as any); });
 
 it("should cover variant examples 17", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -757,7 +757,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "sh", filepath: "p_get", content: "x"}]); });
+`, [{language: "sh", filepath: "p_get", content: "x"}] as any); });
 
 it("should cover variant examples 18", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -766,7 +766,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "sh", filepath: "p_get", content: "x", includeImports: false, includeWrapping: false}]); });
+`, [{language: "sh", filepath: "p_get", content: "x", includeImports: false, includeWrapping: false}] as any); });
 
 it("should cover variant examples 19", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -775,7 +775,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "sh", filepath: "p_get", content: "x", includeImports: true, includeWrapping: true}]); });
+`, [{language: "sh", filepath: "p_get", content: "x", includeImports: true, includeWrapping: true}] as any); });
 
 it("should cover variant examples 16 with full match", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -784,7 +784,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "_p_get", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "_p_get", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 17 with full match 2", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -793,7 +793,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "_p_get_", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "_p_get_", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 20", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -802,7 +802,7 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "_p_post", content: new TextEncoder().encode("x")}]}]); });
+`, [{language: "javascript", files: [{filepath: "_p_post", content: new TextEncoder().encode("x")}]}] as any); });
 
 it("should cover variant examples 21", async () => { generateAOTHtml(`openapi: 3.2.0
 info:
@@ -811,14 +811,13 @@ paths:
   /p:
     get:
       description: d
-`, [{language: "javascript", files: [{filepath: "_get", content: new TextEncoder().encode("x")}]}]); });    it('should cover includeImports and includeWrapping false variants', () => {
+`, [{language: "javascript", files: [{filepath: "_get", content: new TextEncoder().encode("x")}]}] as any); });    it('should cover includeImports and includeWrapping false variants', () => {
         const spec = {
             openapi: '3.2.0',
             info: { title: 'Test', version: '1.0' },
             paths: {
                 '/test': {
                     get: {
-                        operationId: 'test_get',
                         responses: { '200': { description: 'ok' } }
                     }
                 }
@@ -829,7 +828,6 @@ paths:
                 language: 'javascript',
                 filepath: 'test_get',
                 content: 'console.log("no imports no wrap")',
-                operationId: 'test_get',
                 includeImports: false,
                 includeWrapping: false
             }
@@ -845,7 +843,6 @@ paths:
             paths: {
                 '/test': {
                     get: {
-                        operationId: 'test_get',
                         responses: { '200': { description: 'ok' } }
                     }
                 }
@@ -856,7 +853,6 @@ paths:
                 language: 'javascript',
                 filepath: 'test_get',
                 content: 'console.log("yes imports yes wrap")',
-                operationId: 'test_get',
                 includeImports: true,
                 includeWrapping: true
             }
@@ -872,7 +868,6 @@ paths:
             paths: {
                 '/test': {
                     get: {
-                        operationId: 'test_get',
                         operationId: 'op1',
                         responses: { '200': { description: 'ok' } }
                     }

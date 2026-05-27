@@ -259,8 +259,8 @@ export class CDDApiDocs extends HTMLElement {
             const extractedExamples: CodeExample[] = [];
             for (const item of val) {
                 // Handle CodeExample wrapping a JSON string containing endpoints
-                if (item && item.content && typeof item.content === 'string' && 
-                    (item.filepath?.endsWith('.json') || item.content.includes('"endpoints"'))) {
+                if (item && 'content' in item && typeof item.content === 'string' && 
+                    ('filepath' in item && (item.filepath?.endsWith('.json') || item.content.includes('"endpoints"')))) {
                     try {
                         const parsed = JSON.parse(item.content);
                         if (parsed && parsed.endpoints) {
@@ -268,7 +268,7 @@ export class CDDApiDocs extends HTMLElement {
                                 const methods = parsed.endpoints[route];
                                 for (const method of Object.keys(methods || {})) {
                                     extractedExamples.push({
-                                        language: item.language || 'typescript',
+                                        language: ('language' in item ? item.language : undefined) || 'typescript',
                                         filepath: route.replace(/[^a-zA-Z0-9]/g, '_') + '_' + method,
                                         content: methods[method],
                                         includeImports: false,

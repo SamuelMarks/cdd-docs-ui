@@ -195,8 +195,10 @@ export async function generateAllSnippets(
                     const examples: CodeExample[] = [];
                     for (const route of Object.keys(output.endpoints)) {
                         const methods = output.endpoints[route];
+                        if (!methods) continue;
                         for (const method of Object.keys(methods)) {
                             const content = methods[method];
+                            if (content === undefined) continue;
                             examples.push({
                                 language: lang === 'python-all' ? 'python' : lang,
                                 filepath: `${route.replace(/[^a-zA-Z0-9]/g, '_')}_${method}`,

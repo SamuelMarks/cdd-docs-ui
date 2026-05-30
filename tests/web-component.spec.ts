@@ -381,6 +381,28 @@ info:
         expect(el.innerHTML).toContain('checked');
     });
     describe('CDDApiDocs Custom Element', () => {
+        describe('to_docs_json parsing logic', () => {
+            it('unrolls docs.json snippets correctly and respects the wrapper language', async () => {
+                document.body.innerHTML = '<cdd-api-docs></cdd-api-docs>';
+                const el = document.querySelector('cdd-api-docs') as any;
+                el.sdkExamples = [{
+                    language: 'ruby',
+                    filepath: 'docs.json',
+                    content: JSON.stringify({
+                        endpoints: {
+                            '/pets': {
+                                'get': "puts 'hello pets'"
+                            }
+                        }
+                    })
+                }];
+                expect(el.sdkExamples).toHaveLength(1);
+                expect(el.sdkExamples[0].language).toBe('ruby');
+                expect(el.sdkExamples[0].content).toBe("puts 'hello pets'");
+                expect(el.sdkExamples[0].filepath).toBe('_pets_get');
+            });
+        });
+
         it('should allow getting and setting translations', () => {
             const el = document.createElement('cdd-api-docs') as any;
             expect(el.translations).toEqual({});

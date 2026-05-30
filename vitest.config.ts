@@ -9,7 +9,7 @@ export default defineConfig({
             reporter: ['text', 'json', 'html'],
             all: true,
             include: ['src/**/*.ts'],
-            exclude: ['src/cli.ts', 'src/types.ts', 'src/openapi-types.ts', '**/*.spec.ts'],
+            exclude: ['src/openapi-types.ts', '**/*.spec.ts'],
             lines: 95,
             functions: 95,
             branches: 85,

@@ -81,14 +81,14 @@ public/
 *.DS_Store
 
 # Temporary test scripts and dummy data
-# /test-*
-# /bundle-*
-# /petstore*
+/test-*
+/bundle-*
+/petstore*
 *.tmp
 *.temp
+.temp-*
 tmp/
 temp/
 
 # Generated API docs
-docs/*
-!docs/.gitkeep
+docs/

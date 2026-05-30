@@ -698,6 +698,42 @@ it("should handle empty imports proxy", async () => { document.body.innerHTML = 
 
 it("should handle empty wrapping proxy", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<input data-onchange-proxy="opt-wrapping" id="proxy-js">`; el.connectedCallback(); const proxy = el.querySelector('input') as any; proxy.dispatchEvent(new Event("change")); await new Promise(r => setTimeout(r, 0)); });
 
+    it('should securely parse docs.json schemas, catch bad json, and correctly unroll valid endpoints', async () => {
+        const el = document.createElement('cdd-api-docs') as any;
+        el.sdkExamples = [
+            // Malformed JSON (should be caught securely)
+            { language: 'python', filepath: 'docs.json', content: '{\endpoints\: bad}' },
+            // Valid JSON
+            {
+                language: 'rust',
+                filepath: 'docs.json',
+                content: JSON.stringify({
+                    endpoints: {
+                        '/test': {
+                            'get': 'client.get_test()',
+                            'post': 'client.post_test()'
+                        }
+                    }
+                })
+            }
+        ];
+        
+        const examples = el.sdkExamples;
+        expect(examples.length).toBe(3);
+        
+        // Find GET test
+        const getEx = examples.find((e: any) => e.filepath === '_test_get');
+        expect(getEx).toBeDefined();
+        expect(getEx.language).toBe('rust');
+        expect(getEx.content).toBe('client.get_test()');
+        
+        // Find POST test
+        const postEx = examples.find((e: any) => e.filepath === '_test_post');
+        expect(postEx).toBeDefined();
+        expect(postEx.language).toBe('rust');
+        expect(postEx.content).toBe('client.post_test()');
+    });
+
     it('should map CDDOutput to CodeExample array when passed to sdkExamples', async () => {
         const el = document.createElement('cdd-api-docs') as any;
         el.sdkExamples = {

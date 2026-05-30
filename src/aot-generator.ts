@@ -312,13 +312,18 @@ export function generateAOTHtml(
   `;
 
     return `<!DOCTYPE html>
-<html lang="${t.locale}">
+<html lang="${t.locale}" class="no-js">
 <head>
+  <script>document.documentElement.classList.remove('no-js');</script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${spec.info.title} - API Reference</title>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+  <style>
+    /* Progressive Enhancement: Hide JS-dependent elements when JS is disabled */
+    .no-js .cdd-copy-btn { display: none; }
+  </style>
   <style>
     :root {
       ${lightVars}

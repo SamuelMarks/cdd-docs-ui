@@ -98,6 +98,30 @@ export interface DocTranslations {
     noExampleFor: string;
     /** Prefix shown for array types in schema definitions */
     arrayOf: string;
+    /** Header for the property column in schema tables */
+    tableHeaderProperty: string;
+    /** Header for the type column in schema tables */
+    tableHeaderType: string;
+    /** Header for the description column in schema tables */
+    tableHeaderDescription: string;
+    /** Header for the name column in parameter tables */
+    tableHeaderName: string;
+    /** Header for the "in" (location) column in parameter tables */
+    tableHeaderIn: string;
+    /** Label for the terms of service link */
+    termsOfService: string;
+    /** Prefix for the contact information section */
+    contactPrefix: string;
+    /** Fallback label for the contact link if no name is provided */
+    apiSupport: string;
+    /** Heading for the appearance settings section */
+    appearanceHeading: string;
+    /** Accessible label for the main table of contents navigation */
+    tocNavLabel: string;
+    /** Label for the cURL code tab */
+    tabCurl: string;
+    /** Label for the SDK code tab */
+    tabSdk: string;
 }
 
 /** Default English translations for the UI */
@@ -123,4 +147,16 @@ export const defaultTranslations: DocTranslations = {
     requestBody: 'Request Body (JSON)',
     noExampleFor: 'No example for',
     arrayOf: 'Array of:',
+    tableHeaderProperty: 'Property',
+    tableHeaderType: 'Type',
+    tableHeaderDescription: 'Description',
+    tableHeaderName: 'Name',
+    tableHeaderIn: 'In',
+    termsOfService: 'Terms of Service',
+    contactPrefix: 'Contact: ',
+    apiSupport: 'API Support',
+    appearanceHeading: 'Appearance',
+    tocNavLabel: 'Table of Contents',
+    tabCurl: 'cURL',
+    tabSdk: 'SDK',
 };

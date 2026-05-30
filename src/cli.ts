@@ -1,57 +1,99 @@
 #!/usr/bin/env node
-import { readFileSync, writeFileSync, mkdirSync, existsSync, watch } from 'fs';
+import fs from 'fs';
 import { resolve } from 'path';
 import { generateAOTHtml } from './aot-generator';
 import { generateAllSnippets } from './runner';
 import { normalizeSpec } from './parser';
 import express from 'express';
 
-const args = process.argv.slice(2);
-let inputSpec = '';
-let outputDir = './dist';
-let theme: 'light' | 'dark' = 'light';
-let watchMode = false;
-let port = 3000;
-
-for (let i = 0; i < args.length; i++) {
-    if (args[i] === '-v' || args[i] === '--version') {
+/**
+ * Runs the CLI application using the provided command-line arguments.
+ * @param args The array of command line arguments (typically process.argv.slice(2)).
+ */
+export async function run(args: string[]) {
+    const config = parseArgs(args);
+    if (config.version) {
         console.log('0.0.1');
         process.exit(0);
-    } else if (args[i] === '-i' || args[i] === '--input') {
-        inputSpec = args[++i] || '';
-    } else if (args[i] === '-o' || args[i] === '--output') {
-        outputDir = args[++i] || '';
-    } else if (args[i] === '-t' || args[i] === '--theme') {
-        theme = (args[++i] as 'light' | 'dark') || 'light';
-    } else if (args[i] === '-w' || args[i] === '--watch') {
-        watchMode = true;
-    } else if (args[i] === '-p' || args[i] === '--port') {
-        const portStr = args[++i];
-        if (portStr) {
-            port = parseInt(portStr, 10);
-        }
+    }
+    if (!config.inputSpec) {
+        console.error(
+            'Usage: cdd-docs-cli -i <path-to-openapi.yaml> [-o <output-dir>] [-t <theme>] [-w|--watch] [-p|--port <port>]',
+        );
+        process.exit(1);
+    }
+    await generate(config);
+
+    if (config.watchMode) {
+        await startWatchServer(config);
     }
 }
 
-if (!inputSpec) {
-    console.error(
-        'Usage: cdd-docs-cli -i <path-to-openapi.yaml> [-o <output-dir>] [-t <theme>] [-w|--watch] [-p|--port <port>]',
-    );
-    process.exit(1);
+/**
+ * Parses the CLI arguments into a configuration object.
+ * @param args The command line arguments to parse.
+ * @returns An object containing the parsed configuration options.
+ */
+export function parseArgs(args: string[]): {
+    /** The input OpenAPI specification path or URL. */
+    inputSpec: string;
+    /** The output directory path. */
+    outputDir: string;
+    /** The visual theme (light or dark). */
+    theme: 'light' | 'dark';
+    /** Whether to enable watch mode with a live-reload server. */
+    watchMode: boolean;
+    /** The port for the live-reload server. */
+    port: number;
+    /** Whether the version flag was passed. */
+    version: boolean;
+} {
+    let inputSpec = '';
+    let outputDir = './dist';
+    let theme: 'light' | 'dark' = 'light';
+    let watchMode = false;
+    let port = 3000;
+    let version = false;
+
+    for (let i = 0; i < args.length; i++) {
+        if (args[i] === '-v' || args[i] === '--version') {
+            version = true;
+        } else if (args[i] === '-i' || args[i] === '--input') {
+            inputSpec = args[++i] || '';
+        } else if (args[i] === '-o' || args[i] === '--output') {
+            outputDir = args[++i] || '';
+        } else if (args[i] === '-t' || args[i] === '--theme') {
+            theme = (args[++i] as 'light' | 'dark') || 'light';
+        } else if (args[i] === '-w' || args[i] === '--watch') {
+            watchMode = true;
+        } else if (args[i] === '-p' || args[i] === '--port') {
+            const portStr = args[++i];
+            if (portStr) {
+                port = parseInt(portStr, 10);
+            }
+        }
+    }
+    return { inputSpec, outputDir, theme, watchMode, port, version };
 }
 
-const specPath = resolve(process.cwd(), inputSpec);
-const outPath = resolve(process.cwd(), outputDir);
-const outHtmlPath = resolve(outPath, 'index.html');
+/**
+ * Generates the API documentation artifacts based on the configuration.
+ * @param config The parsed CLI configuration object.
+ * @returns A boolean indicating whether generation was successful.
+ */
+export async function generate(config: ReturnType<typeof parseArgs>) {
+    const { inputSpec, outputDir, theme, watchMode } = config;
+    const specPath = resolve(process.cwd(), inputSpec);
+    const outPath = resolve(process.cwd(), outputDir);
+    const outHtmlPath = resolve(outPath, 'index.html');
 
-async function generate() {
     try {
         let specContent = '';
         let effectiveSpecPath = specPath;
 
         const isUrl =
             /^https?:\/\//i.test(inputSpec) ||
-            (!inputSpec.includes('\n') && inputSpec.includes('/') && !existsSync(resolve(process.cwd(), inputSpec)));
+            (!inputSpec.includes('\n') && inputSpec.includes('/') && !fs.existsSync(resolve(process.cwd(), inputSpec)));
 
         if (isUrl) {
             let url = inputSpec;
@@ -61,9 +103,9 @@ async function generate() {
             if (!res.ok) throw new Error(`Failed to fetch spec from URL: ${res.status} ${res.statusText}`);
             specContent = await res.text();
             effectiveSpecPath = resolve(process.cwd(), '.temp-spec.yaml');
-            writeFileSync(effectiveSpecPath, specContent);
+            fs.writeFileSync(effectiveSpecPath, specContent);
         } else {
-            specContent = readFileSync(specPath, 'utf-8');
+            specContent = fs.readFileSync(specPath, 'utf-8');
         }
 
         const parsedData = normalizeSpec(specContent);
@@ -74,11 +116,11 @@ async function generate() {
         console.log('Compiling static HTML...');
         const html = generateAOTHtml(specContent, examples, theme, watchMode);
 
-        if (!existsSync(outPath)) {
-            mkdirSync(outPath, { recursive: true });
+        if (!fs.existsSync(outPath)) {
+            fs.mkdirSync(outPath, { recursive: true });
         }
 
-        writeFileSync(outHtmlPath, html);
+        fs.writeFileSync(outHtmlPath, html);
         console.log('Successfully generated API documentation at ' + outHtmlPath);
         return true;
     } catch (err) {
@@ -87,50 +129,61 @@ async function generate() {
     }
 }
 
-async function run() {
-    await generate();
+/**
+ * Starts a watch server to regenerate the API docs and notify connected clients on changes.
+ * @param config The parsed CLI configuration object.
+ * @returns The active Express server instance.
+ */
+export async function startWatchServer(config: ReturnType<typeof parseArgs>) {
+    const { inputSpec, outputDir, port } = config;
+    const specPath = resolve(process.cwd(), inputSpec);
+    const outPath = resolve(process.cwd(), outputDir);
+    const app = express();
+    app.use(express.static(outPath));
 
-    if (watchMode) {
-        const app = express();
-        app.use(express.static(outPath));
+    let clients: express.Response[] = [];
 
-        let clients: express.Response[] = [];
-
-        app.get('/__livereload', (req, res) => {
-            res.setHeader('Content-Type', 'text/event-stream');
-            res.setHeader('Cache-Control', 'no-cache');
-            res.setHeader('Connection', 'keep-alive');
-            res.flushHeaders();
-            clients.push(res);
-            req.on('close', () => {
-                clients = clients.filter(client => client !== res);
-            });
+    app.get('/__livereload', (req, res) => {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        res.flushHeaders();
+        clients.push(res);
+        req.on('close', () => {
+            clients = clients.filter(client => client !== res);
         });
+    });
 
-        app.listen(port, () => {
-            console.log(`Watching for changes... Server running at http://localhost:${port}`);
+    const server = app.listen(port, () => {
+        console.log(`Watching for changes... Server running at http://localhost:${port}`);
+    });
+
+    let isGenerating = false;
+    if (fs.existsSync(specPath)) {
+        fs.watch(specPath, async eventType => {
+            if (isGenerating) return;
+            isGenerating = true;
+            console.log(`\nDetected ${eventType} on ${inputSpec}, regenerating...`);
+            const success = await generate(config);
+            if (success) {
+                clients.forEach(client => client.write('data: reload\n\n'));
+            }
+            setTimeout(() => {
+                isGenerating = false;
+            }, 500); // Debounce
         });
-
-        let isGenerating = false;
-        if (existsSync(specPath)) {
-            watch(specPath, async eventType => {
-                if (isGenerating) return;
-                isGenerating = true;
-                console.log(`\nDetected ${eventType} on ${inputSpec}, regenerating...`);
-                const success = await generate();
-                if (success) {
-                    clients.forEach(client => client.write('data: reload\n\n'));
-                }
-                setTimeout(() => {
-                    isGenerating = false;
-                }, 500); // Debounce
-            });
-        } else {
-            console.log(
-                `Cannot watch URL or non-existent local file: ${inputSpec}. Watch server is running but file changes won't be detected.`,
-            );
-        }
+    } else {
+        console.log(
+            `Cannot watch URL or non-existent local file: ${inputSpec}. Watch server is running but file changes won't be detected.`,
+        );
     }
+    return server;
 }
 
-run();
+// Execute if run directly
+import { fileURLToPath } from 'url';
+const isMainModule = typeof process !== 'undefined' && process.argv && process.argv[1] === fileURLToPath(import.meta.url);
+/* istanbul ignore next */
+if (isMainModule) {
+    run(process.argv.slice(2));
+}

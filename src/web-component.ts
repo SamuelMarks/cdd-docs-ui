@@ -184,7 +184,19 @@ export function initApiDocs(
                 }
             });
 
-            const url = `https://api.example.com${route}${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
+            // Route through gateway if dynamic, otherwise hit relative route
+            const apiDocsElement = form.closest('cdd-api-docs') as CDDApiDocs | null;
+            const org = apiDocsElement ? (apiDocsElement as any)._org : undefined;
+            const repo = apiDocsElement ? (apiDocsElement as any)._repo : undefined;
+            const urlParams = new URLSearchParams(window.location.search);
+            const currentV = urlParams.get('v') || '';
+            const versionPath = currentV ? `/${encodeURIComponent(currentV)}` : '';
+
+            let url = `https://api.example.com${route}${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
+            if (org && repo) {
+                // cdd-gateway proxy syntax: /cdd-gateway/proxy/[org]/[repo]/[version]/[path...]
+                url = `/cdd-gateway/proxy/${encodeURIComponent(org)}/${encodeURIComponent(repo)}${versionPath}${route}${queryParams.toString() ? '?' + queryParams.toString() : ''}`;
+            }
 
             const responseContainer = f.nextElementSibling as HTMLElement;
             /* v8 ignore next */ if (!responseContainer || !responseContainer.classList.contains('cdd-try-response')) return;
@@ -228,6 +240,8 @@ export function initApiDocs(
 export class CDDApiDocs extends HTMLElement {
     private _translations: Partial<DocTranslations> = {};
     private _sdkExamples: CodeExample[] = [];
+    private _org?: string;
+    private _repo?: string;
 
     constructor() {
         super();
@@ -376,7 +390,27 @@ export class CDDApiDocs extends HTMLElement {
     }
 
     private triggerRender() {
-        const spec = this.getAttribute('spec-content') || this.getAttribute('spec') || '';
+        let spec = this.getAttribute('spec-content') || this.getAttribute('spec') || '';
+        
+        // Dynamic Routing from URL
+        if (!spec) {
+            const path = window.location.pathname;
+            const match = path.match(/^\/u\/([^/]+)\/([^/]+)/);
+            if (match) {
+                const org = match[1];
+                const repo = match[2];
+                if (org && repo) {
+                    this._org = org;
+                    this._repo = repo;
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const version = urlParams.get('v') || '';
+                    // Fetch layer requesting from cdd-storage via cdd-gateway
+                    const versionPath = version ? `/${encodeURIComponent(version)}` : '';
+                    spec = `/cdd-gateway/storage/${encodeURIComponent(org)}/${encodeURIComponent(repo)}${versionPath}/schema.json`;
+                }
+            }
+        }
+
         if (spec) {
             this.renderSpec(spec);
         }
@@ -403,11 +437,17 @@ export class CDDApiDocs extends HTMLElement {
 
             if (isUrl) {
                 let url = trimmed;
-                if (!/^https?:\/\//i.test(url)) {
+                if (!/^https?:\/\//i.test(url) && !url.startsWith('/')) {
                     url = 'https://' + url;
                 }
+                
+                this.innerHTML = `<div class="cdd-loading" style="padding: 2rem; font-family: sans-serif;">Loading documentation...</div>`;
+                
                 const res = await fetch(url);
                 if (!res.ok) {
+                    if (res.status === 404) {
+                        throw new Error('404 Not Found: The specified organization or repository does not exist or has no published schema.');
+                    }
                     throw new Error(`Failed to fetch spec from URL: ${res.status} ${res.statusText}`);
                 }
                 contentToRender = await res.text();
@@ -435,6 +475,73 @@ export class CDDApiDocs extends HTMLElement {
                 this.innerHTML = styleHtml + bodyMatch[1];
             } else {
                 this.innerHTML = html; // Fallback
+            }
+
+            // Inject dynamic header elements (versions and SDK downloads)
+            const org = this._org;
+            const repo = this._repo;
+            if (org && repo) {
+                const header = this.querySelector('.cdd-main header') || this.querySelector('header');
+                if (header) {
+                    const dynamicContainer = document.createElement('div');
+                    dynamicContainer.className = 'cdd-dynamic-header-content';
+                    dynamicContainer.style.marginTop = '1rem';
+                    dynamicContainer.style.padding = '1rem';
+                    dynamicContainer.style.background = 'var(--cdd-surface-variant, #f0f0f0)';
+                    dynamicContainer.style.borderRadius = '4px';
+
+                    // Version Toggle
+                    const versionLabel = document.createElement('label');
+                    versionLabel.textContent = 'Version: ';
+                    versionLabel.style.fontWeight = 'bold';
+                    const versionSelect = document.createElement('select');
+                    versionSelect.className = 'cdd-version-select';
+                    versionSelect.innerHTML = `<option value="latest">latest</option>`;
+                    // Listen for changes
+                    versionSelect.addEventListener('change', (e) => {
+                        const ver = (e.target as HTMLSelectElement).value;
+                        const url = new URL(window.location.href);
+                        url.searchParams.set('v', ver);
+                        window.history.pushState({}, '', url.toString());
+                        // Refresh spec based on version
+                        this.renderSpec(`/cdd-gateway/storage/${encodeURIComponent(org)}/${encodeURIComponent(repo)}/${encodeURIComponent(ver)}/schema.json`);
+                    });
+
+                    // Download Links
+                    const downloadContainer = document.createElement('div');
+                    downloadContainer.style.marginTop = '0.5rem';
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const currentV = urlParams.get('v') || '';
+                    const versionPath = currentV ? `/${encodeURIComponent(currentV)}` : '';
+
+                    downloadContainer.innerHTML = `
+                        <strong style="margin-right:0.5rem;">Download SDKs:</strong>
+                        <a href="/cdd-gateway/storage/${encodeURIComponent(org)}/${encodeURIComponent(repo)}${versionPath}/sdk-typescript.tgz" download class="cdd-btn" style="margin-right:0.5rem; text-decoration:none; padding:0.25rem 0.5rem; background:var(--cdd-primary); color:white; border-radius:4px; font-size:0.875rem;">TypeScript</a>
+                        <a href="/cdd-gateway/storage/${encodeURIComponent(org)}/${encodeURIComponent(repo)}${versionPath}/sdk-python.whl" download class="cdd-btn" style="text-decoration:none; padding:0.25rem 0.5rem; background:var(--cdd-primary); color:white; border-radius:4px; font-size:0.875rem;">Python</a>
+                    `;
+
+                    dynamicContainer.appendChild(versionLabel);
+                    dynamicContainer.appendChild(versionSelect);
+                    dynamicContainer.appendChild(downloadContainer);
+
+                    // Attempt to fetch versions asynchronously to populate the dropdown
+                    fetch(`/cdd-gateway/storage/${encodeURIComponent(org)}/${encodeURIComponent(repo)}/versions.json`)
+                        .then(res => res.json())
+                        .then(versions => {
+                            if (Array.isArray(versions)) {
+                                versionSelect.innerHTML = versions.map((v: string) => `<option value="${v}">${v}</option>`).join('');
+                                // Select current version if in URL
+                                const urlParams = new URLSearchParams(window.location.search);
+                                const currentV = urlParams.get('v');
+                                if (currentV) {
+                                    versionSelect.value = currentV;
+                                }
+                            }
+                        })
+                        .catch(() => { /* silent fallback */ });
+
+                    header.appendChild(dynamicContainer);
+                }
             }
 
             initApiDocs(this, this._translations);

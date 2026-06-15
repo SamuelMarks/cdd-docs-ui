@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach, Mock } from 'vitest';
 import { initApiDocs } from '../src/web-component';
 
 describe('progressive-enhancement', () => {
@@ -490,7 +490,7 @@ info:
             });
 
             await el.renderSpec('example.com/spec.yaml');
-            expect(el.innerHTML).toContain('Failed to fetch spec from URL: 404 Not Found');
+            expect(el.innerHTML).toContain('404 Not Found: The specified organization or repository does not exist or has no published schema.');
             expect(global.fetch).toHaveBeenCalledWith('https://example.com/spec.yaml');
         });
 
@@ -526,6 +526,47 @@ paths: {}`);
             String.prototype.match = originalMatch;
 
             expect(el.innerHTML).toContain('Fallback Test');
+        });
+
+        it('should handle dynamic routing from URL when spec is not provided', async () => {
+            const originalPathname = window.location.pathname;
+            const originalSearch = window.location.search;
+            
+            // Mock window.location
+            Object.defineProperty(window, 'location', {
+                value: {
+                    pathname: '/u/test-org/test-repo',
+                    search: '?v=2.0.0',
+                    href: 'http://localhost/u/test-org/test-repo?v=2.0.0'
+                },
+                writable: true
+            });
+
+            const mockResponse = {
+                ok: true,
+                text: vi.fn().mockResolvedValue(`openapi: 3.0.0\ninfo:\n  title: Dynamic Test\n  version: 2.0.0\npaths: {}`),
+            };
+            (global.fetch as Mock).mockResolvedValue(mockResponse);
+
+            const el = document.createElement('cdd-api-docs') as any;
+            document.body.appendChild(el);
+            
+            // Wait for connectedCallback to finish async render
+            await new Promise((resolve) => setTimeout(resolve, 50));
+
+            expect(global.fetch).toHaveBeenCalledWith('/cdd-gateway/storage/test-org/test-repo/2.0.0/schema.json');
+            
+            // Since it fetches, we expect it also renders version toggles and SDK download links
+            expect(el.innerHTML).toContain('Version:');
+            expect(el.innerHTML).toContain('Download SDKs:');
+            expect(el.innerHTML).toContain('/sdk-typescript.tgz');
+            expect(el.innerHTML).toContain('/sdk-python.whl');
+            
+            // Restore window.location
+            Object.defineProperty(window, 'location', {
+                value: { pathname: originalPathname, search: originalSearch, href: 'http://localhost' },
+                writable: true
+            });
         });
 
         it('should register and render a spec attribute', () => {

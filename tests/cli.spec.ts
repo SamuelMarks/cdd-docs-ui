@@ -232,6 +232,48 @@ describe('CLI logic', () => {
         closeCallback();
     });
 
+    it('SPA fallback route should serve index.html or call next()', async () => {
+        const config = parseArgs(['-i', 'local.yaml', '-o', 'outdir', '-w']);
+        (fs.existsSync as Mock).mockImplementation((path) => {
+            if (path.toString().includes('local.yaml')) return true;
+            if (path.toString().includes('index.html')) return true; // mock index.html exists
+            return false;
+        });
+
+        await startWatchServer(config);
+        
+        const expressMock = (await import('express')).default as any;
+        const app = expressMock();
+        
+        const routeCallback = app.get.mock.calls.find((call: any) => call[0] === '*')?.[1];
+        expect(routeCallback).toBeDefined();
+
+        // Scenario 1: accepts html
+        const reqMock1 = { accepts: vi.fn().mockReturnValue(true) };
+        const resMock1 = { sendFile: vi.fn() };
+        const nextMock1 = vi.fn();
+        routeCallback(reqMock1, resMock1, nextMock1);
+        expect(resMock1.sendFile).toHaveBeenCalledWith(expect.stringContaining('index.html'));
+        expect(nextMock1).not.toHaveBeenCalled();
+
+        // Scenario 2: does not accept html
+        const reqMock2 = { accepts: vi.fn().mockReturnValue(false) };
+        const resMock2 = { sendFile: vi.fn() };
+        const nextMock2 = vi.fn();
+        routeCallback(reqMock2, resMock2, nextMock2);
+        expect(resMock2.sendFile).not.toHaveBeenCalled();
+        expect(nextMock2).toHaveBeenCalled();
+
+        // Scenario 3: accepts html but index.html doesn't exist
+        (fs.existsSync as Mock).mockReturnValue(false); // mock index.html does not exist
+        const reqMock3 = { accepts: vi.fn().mockReturnValue(true) };
+        const resMock3 = { sendFile: vi.fn() };
+        const nextMock3 = vi.fn();
+        routeCallback(reqMock3, resMock3, nextMock3);
+        expect(resMock3.sendFile).not.toHaveBeenCalled();
+        expect(nextMock3).toHaveBeenCalled();
+    });
+
     it('parseArgs should handle missing values for flags', () => {
         const args = ['-i', '', '-o', '', '-t', '', '--port', ''];
         const config = parseArgs(args);

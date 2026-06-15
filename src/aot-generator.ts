@@ -183,7 +183,7 @@ export function generateAOTHtml(
 
             <details class="cdd-try-it-out">
               <summary class="cdd-try-summary">${t.tryItOut}</summary>
-              <form class="cdd-try-form" method="${m === 'get' ? 'GET' : 'POST'}" action="https://api.example.com${route}" data-method="${m.toUpperCase()}" data-route="${route}">
+              <form class="cdd-try-form" method="${m === 'get' ? 'GET' : 'POST'}" action="${'/'}" data-method="${m.toUpperCase()}" data-route="${route}">
                 ${
                     op.parameters
                         ? op.parameters
@@ -322,7 +322,14 @@ export function generateAOTHtml(
   <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
   <style>
     /* Progressive Enhancement: Hide JS-dependent elements when JS is disabled */
-    .no-js .cdd-copy-btn { display: none; }
+    .no-js .cdd-copy-btn,
+    .no-js .cdd-search-input,
+    .no-js .cdd-try-it-out,
+    .no-js .cdd-code-tabs input[type="radio"],
+    .no-js .cdd-code-tabs label { display: none; }
+    
+    .no-js .cdd-code-tabs .cdd-tab-content { display: block; margin-bottom: 1rem; border-top: 1px solid rgba(255,255,255,0.1); }
+    .no-js .cdd-code-tabs .cdd-tab-content:before { content: "Code block: "; font-size: 0.75rem; opacity: 0.7; }
   </style>
   <style>
     :root {

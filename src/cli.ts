@@ -154,6 +154,18 @@ export async function startWatchServer(config: ReturnType<typeof parseArgs>) {
         });
     });
 
+    // SPA fallback route
+    app.get('*', (req, res, next) => {
+        if (req.accepts('html')) {
+            const indexHtml = resolve(outPath, 'index.html');
+            if (fs.existsSync(indexHtml)) {
+                res.sendFile(indexHtml);
+                return;
+            }
+        }
+        next();
+    });
+
     const server = app.listen(port, () => {
         console.log(`Watching for changes... Server running at http://localhost:${port}`);
     });

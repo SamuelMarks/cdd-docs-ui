@@ -33,7 +33,7 @@
         "@types/express": "^5.0.6",
         "@types/fs-extra": "^11.0.4",
         "@types/js-yaml": "^4.0.9",
-        "@types/node": "^25.9.1",
+        "@types/node": "^25.9.3",
         "@vitest/coverage-istanbul": "^4.1.7",
         "@vitest/coverage-v8": "^4.1.7",
         "esbuild": "^0.28.0",

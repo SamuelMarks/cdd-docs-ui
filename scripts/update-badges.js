@@ -1,12 +1,16 @@
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // 1. Get Test Coverage
 const summaryPath = path.join(__dirname, '..', 'coverage', 'coverage-summary.json');
 let testCov = 0;
 try {
     if (fs.existsSync(summaryPath)) {
-        const summary = require(summaryPath);
+        const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
         testCov = summary.total.statements.pct;
     } else {
         console.warn('coverage-summary.json not found!');
@@ -35,7 +39,7 @@ let documentedExports = 0;
 
 srcFiles.forEach(file => {
     const content = fs.readFileSync(file, 'utf-8');
-    const lines = content.split('\\n');
+    const lines = content.split('\n');
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         // Find exported functions, constants, types, classes, interfaces
@@ -47,7 +51,7 @@ srcFiles.forEach(file => {
             while (j >= 0 && (lines[j].trim() === '' || lines[j].trim().startsWith('@'))) {
                 j--;
             }
-            if (j >= 0 && lines[j].trim() === '*/') {
+            if (j >= 0 && lines[j].trim().endsWith('*/')) {
                 hasDoc = true;
             }
             if (hasDoc) {

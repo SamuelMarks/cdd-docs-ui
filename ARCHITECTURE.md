@@ -29,6 +29,7 @@ flowchart TD
     B(AOT CLI Generator):::headline
     B2(Web Component SPA):::headline
     C{cdd-ctl Rust CLI}:::highlight
+    C2{WASM cdd targets}:::highlight
     D[[13 Language Targets]]:::bodytext
     E[Static HTML Site]:::terminal
     F[Dynamic Browser UI]:::terminal
@@ -37,7 +38,9 @@ flowchart TD
     A -- Parses --> B2
     B -- Executes --> C
     C -- Routes to --> D
+    C2 -- Browser execution --> D
     D -- JSON Snippets --> B
+    D -- Bindings & Messages --> B2
     B -- Renders --> E
     B2 -- Renders --> F
 ```
@@ -48,10 +51,11 @@ flowchart TD
    The CLI generates static HTML files. Every endpoint and language combination can have a dedicated structure. This ensures the documentation works perfectly without JavaScript enabled, is highly SEO-friendly, and loads instantaneously. It relies on pure TypeScript string literals and `marked` for HTML rendering, eschewing heavier template engines like EJS.
 
 2. **Client-Side SPA (Web Component Mode):**
-   The project exports a Custom Web Component (`<cdd-api-docs>`) that can be embedded in any frontend (like the `cdd-web-ui`). It dynamically renders an OpenAPI spec in the browser. It supports `postMessage` integration to sync states (like themes and real-time spec updates) with parent frames.
+   The project exports a Custom Web Component (`<cdd-api-docs>`) that can be embedded in any frontend (like `cdd-web-ui`). It dynamically renders an OpenAPI spec in the browser. It integrates deeply via attribute and property bindings (e.g. `[sdkExamples]`, `spec-content`) to receive live generated snippets offline. It also supports legacy `postMessage` integration to sync states (like themes and real-time spec updates) with parent iframe containers.
 
 3. **External Code Generation via `cdd-ctl` Toolchain:**
    In AOT mode, the tool shells out to the `cdd-ctl` Rust CLI tool. It passes the OpenAPI spec to this amalgamation tool and expects JSON payloads containing the generated code examples for a requested target language. The frontend UI is then self-contained with these snippets.
+   *Note: In SPA mode, these snippets are generated entirely offline by the parent application (via WASM) and fed directly into the Web Component.*
 
 ## Component Breakdown
 
@@ -101,7 +105,8 @@ Enforces strict TypeScript interfaces for all internal structures, including CLI
 
 ## Data Flow (Web Component SPA)
 
-1. A parent application (e.g., `cdd-web-ui`) imports `bundle.js` and embeds `<cdd-api-docs></cdd-api-docs>`.
-2. The component initializes and posts a `DOCS_UI_READY` message to the parent window.
-3. The parent window posts an `UPDATE_SPEC` message with the OpenAPI string.
-4. The component parses the spec and dynamically renders the layout.
+1. A parent application (e.g., `cdd-web-ui`) imports the library and embeds `<cdd-api-docs></cdd-api-docs>`.
+2. The parent application natively generates SDK examples offline using WASM targets for supported languages.
+3. The component receives the spec and generated code snippets via modern web component bindings (`[attr.spec-content]`, `[sdkExamples]`). 
+4. **(Legacy/Iframe mode):** The component initializes and posts a `DOCS_UI_READY` message to the parent window, and listens for `UPDATE_SPEC` messages with the OpenAPI string via `postMessage`.
+5. The component parses the spec, merges the provided snippets, and dynamically renders the documentation layout directly in the browser.

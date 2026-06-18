@@ -31,6 +31,7 @@ flowchart TD
     B(AOT CLI Generator):::headline
     B2(Web Component SPA):::headline
     C{cdd-ctl Rust CLI}:::highlight
+    C2{WASM cdd targets}:::highlight
     D[[13 Language Targets]]:::bodytext
     E[Static HTML Site]:::terminal
     F[Dynamic Browser UI]:::terminal
@@ -39,7 +40,9 @@ flowchart TD
     A -- Parses --> B2
     B -- Executes --> C
     C -- Routes to --> D
+    C2 -- Browser execution --> D
     D -- JSON Snippets --> B
+    D -- Bindings & Messages --> B2
     B -- Renders --> E
     B2 -- Renders --> F
 ```
@@ -50,7 +53,9 @@ flowchart TD
 - **100% Test Coverage:** Rigorously tested core logic.
 - **Strict TypeScript:** No `any` or `unknown` types.
 - **Progressive Enhancement (AOT Mode):** Generates pure static HTML for fast load times and SEO. Enhances with Vanilla JS for dynamic, no-reload language switching.
-- **postMessage Integration (SPA Mode):** The client-side Web Component seamlessly integrates with parent iframes (like `cdd-web-ui`), reacting to live spec changes and theme toggles.
+- **Direct Web Component Integration (SPA Mode):** The `<cdd-api-docs>` component accepts attribute (`spec-content`, `theme`) and property (`sdkExamples`) bindings for deep integration with frontend frameworks like Angular in `cdd-web-ui`.
+- **WASM & Offline-First Compatibility:** In SPA mode, seamlessly renders code snippets generated entirely offline via WebAssembly by parent applications like `cdd-web-ui`.
+- **Legacy postMessage Integration:** Still supports `postMessage` integration to sync states with parent iframes when native component bindings are not viable.
 - **Variant Support:** Supports and dynamically renders snippets with or without imports and code-wrapping via the underlying `cdd-ctl` integrations.
 - **Material 3 Theming:** Responsive, modern design out of the box with vanilla CSS.
 

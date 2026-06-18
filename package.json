@@ -8,7 +8,7 @@
     "scripts": {
         "test": "vitest run --coverage",
         "start": "node dist/cli.js -i example/spec.json -o example/public",
-        "serve": "npx serve example/public",
+        "serve": "npx serve example/public -l 8082",
         "build": "npx tsc && esbuild src/web-component.ts --bundle --outfile=dist/bundle.js --format=esm && esbuild src/cli.ts --bundle --outfile=dist/cli.js --platform=node --format=esm",
         "prestart": "npm run build",
         "prepare": "echo no-husky"

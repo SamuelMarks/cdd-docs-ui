@@ -30,12 +30,13 @@ The component communicates with its host iframe window via `postMessage`.
 - `{ type: 'DOCS_UI_READY' }`: Fired when the component has mounted and is ready to receive data.
 
 **From Host to Component:**
-- `{ type: 'UPDATE_SPEC', payload: '<openapi_yaml_or_json>' }`: Parses the provided string and updates the documentation view.
+- `{ type: 'UPDATE_SPEC', payload: '<openapi_or_arazzo_yaml_or_json>' }`: Parses the provided OpenAPI 3.2.0, Swagger 2.0, or Arazzo 1.1.0 string and updates the documentation view.
+- `{ type: 'UPDATE_ARAZZO', payload: '<arazzo_yaml_or_json>' }`: Attaches or updates a companion Arazzo 1.1.0 workflow specification alongside the primary OpenAPI specification.
 - `{ type: 'SET_THEME', payload: 'dark' | 'light' }`: Toggles the CSS theme variables.
 
 ## 2. AOT CLI Mode (Server-Side/Static)
 
-The CLI generates interactive, multi-language API documentation websites from OpenAPI specifications, running external toolchains ahead of time.
+The CLI generates interactive, multi-language API and workflow documentation websites from OpenAPI 3.2.0, Swagger 2.0, and Arazzo 1.1.0 specifications, running external toolchains ahead of time.
 
 ### Global Installation
 
@@ -49,7 +50,7 @@ You can now run `cdd-docs-cli` from any directory.
 
 ### Basic Generation
 
-The most basic command takes an OpenAPI specification file and outputs the generated website to a specified directory.
+The most basic command takes an OpenAPI or Arazzo specification file and outputs the generated website to a specified directory.
 
 ```bash
 cdd-docs-cli -i myspec.json -o build/
@@ -57,12 +58,23 @@ cdd-docs-cli -i myspec.json -o build/
 
 ### Options Explained
 
-- `-i, --input <path>`
-    - Specifies the location of the OpenAPI JSON specification.
-    - _Default:_ `spec.json`
+- `-i, --input <path-or-url>`
+    - Specifies the location or URL of the OpenAPI 3.2.0, Swagger 2.0, or Arazzo 1.1.0 YAML/JSON specification (required).
+- `-a, --arazzo <path-or-url>`
+    - Optional companion Arazzo 1.1.0 workflow specification to render alongside an OpenAPI specification.
 - `-o, --output <path>`
-    - Specifies the target directory for the generated static site. It will be emptied before generation.
-    - _Default:_ `public`
+    - Specifies the target directory for the generated static site (`index.html`).
+    - _Default:_ `./dist`
+- `-t, --theme <light|dark>`
+    - Sets the initial color theme (`light` or `dark`).
+    - _Default:_ `light`
+- `-w, --watch`
+    - Starts an Express live-reload watch server that rebuilds and reloads on spec changes.
+- `-p, --port <number>`
+    - Port number for the live-reload watch server.
+    - _Default:_ `3000`
+- `-v, --version`
+    - Prints the CLI version (`0.0.4`) and exits.
 
 ## Supported Toolchain Repositories (AOT Mode)
 

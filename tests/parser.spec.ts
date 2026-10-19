@@ -1,8 +1,14 @@
+/**
+ * Unit tests for OpenAPI 3.2.0, Swagger 2.0, and Arazzo 1.1.0 parser and SDK example mapper (`src/parser.ts`).
+ * @module parser.spec
+ */
 import { describe, it, expect } from 'vitest';
 import {
     normalizeSpec,
     mapSdkExamples,
     isReference,
+    isRecord,
+    toJsonValue,
     parseInfo,
     parseServer,
     parseSchema,
@@ -11,68 +17,477 @@ import {
     parseResponse,
     parsePathItem,
     parseSecurityScheme,
-    parseComponents, parseReference, parseLicense, parseContact, parseServerVariable, parseExample, parseEncoding, parseHeader, parseMediaType, parseOAuthFlow, parseExternalDocs, parseCallback, parsePaths,
+    parseComponents,
+    parseReference,
+    parseLicense,
+    parseContact,
+    parseServerVariable,
+    parseExample,
+    parseEncoding,
+    parseHeader,
+    parseMediaType,
+    parseOAuthFlow,
+    parseExternalDocs,
+    parseCallback,
+    parsePaths,
     parseTag,
     parseSecurityRequirement,
+    parseLink,
+    parseResponses,
+    parseOperation,
 } from '../src/parser';
-import { DocData, CodeExample, PathItemObject } from '../src/types';
+import {
+    DocData,
+    CodeExample,
+    PathItemObject,
+    SchemaObject,
+    ParameterObject,
+    SecuritySchemeObject,
+    ResponseObject,
+    ExampleObject,
+    HeaderObject,
+    LinkObject,
+    CallbackObject,
+    RequestBodyObject,
+    ReferenceObject,
+    MediaTypeObject,
+} from '../src/types';
+
+/**
+ * Asserts that a parsed OpenAPI object is not a ReferenceObject and narrows its type.
+ * @param val The object or reference to narrow.
+ * @returns The narrowed non-reference object.
+ */
+function assertNotRef<T extends object>(val: T | ReferenceObject | undefined): T {
+    if (!val || isReference(val)) {
+        throw new Error('Expected non-reference object');
+    }
+    return val;
+}
+
+describe('isRecord and toJsonValue helpers', () => {
+    it('should narrow records and coerce unknown values into JsonValue', () => {
+        expect(isRecord({})).toBe(true);
+        expect(isRecord(null)).toBe(false);
+        expect(isRecord([])).toBe(false);
+        expect(isRecord('str')).toBe(false);
+
+        expect(toJsonValue(null)).toBeNull();
+        expect(toJsonValue('hello')).toBe('hello');
+        expect(toJsonValue(42)).toBe(42);
+        expect(toJsonValue(true)).toBe(true);
+        expect(toJsonValue([1, 'two', { a: false, skip: undefined }])).toEqual([1, 'two', { a: false }]);
+        expect(toJsonValue(Symbol('sym'))).toBe('Symbol(sym)');
+    });
+});
 
 describe('parser edge cases', () => {
     it('should throw on missing info object', () => {
         expect(() => parseInfo(null)).toThrow('Missing info object');
+        expect(() => parseInfo(undefined)).toThrow('Missing info object');
     });
 
-    it('should handle partial server objects with variables', () => {
-        const s = parseServer({ url: 'test', variables: { port: { default: '80' } } });
-        expect((s as any).variables?.port.default).toBe('80');
-    });
+    it('should handle empty or partial info, contact, license, server, reference', () => {
+        const info = parseInfo({});
+        expect(info.title).toBe('');
+        expect(info.version).toBe('');
 
-    it('should parse boolean schema properties', () => {
-        const s = parseSchema({ type: 'string', exclusiveMaximum: true, readOnly: true, writeOnly: false });
-        expect((s as any).exclusiveMaximum).toBe(true);
-        expect((s as any).readOnly).toBe(true);
-        expect((s as any).writeOnly).toBe(false);
-    });
-
-    it('should parse security requirement properly', () => {
-        const r = parseSecurityRequirement({ api_key: [] });
-        expect((r as any).api_key).toEqual([]);
-    });
-
-    it('should handle discriminator and xml in schema', () => {
-        const s = parseSchema({
-            discriminator: { propertyName: 'type', mapping: { a: 'A' } },
-            xml: { name: 'test', attribute: true, wrapped: false },
+        expect(parseContact(null)).toEqual({
+            name: undefined,
+            url: undefined,
+            email: undefined,
         });
-        expect((s as any).discriminator.mapping.a).toBe('A');
-        expect((s as any).xml.attribute).toBe(true);
-    });
-
-    it('should handle full security scheme', () => {
-        const ss = parseSecurityScheme({
-            type: 'oauth2',
-            flows: { implicit: { authorizationUrl: 'url', scopes: { read: 'read' } } },
+        expect(parseContact({ url: '' })).toEqual({
+            name: undefined,
+            url: undefined,
+            email: undefined,
         });
-        expect((ss as any).flows.implicit.scopes.read).toBe('read');
+
+        expect(parseLicense(null)).toEqual({
+            name: '',
+            identifier: undefined,
+            url: undefined,
+        });
+        expect(parseLicense({ name: 'Apache', identifier: 'Apache-2.0', url: 'https://apache' })).toEqual({
+            name: 'Apache',
+            identifier: 'Apache-2.0',
+            url: 'https://apache',
+        });
+
+        expect(parseServerVariable(null)).toEqual({
+            enum: undefined,
+            default: '',
+            description: undefined,
+        });
+        expect(parseServerVariable({ description: 'desc', enum: ['a', 'b'], default: 'a' })).toEqual({
+            enum: ['a', 'b'],
+            default: 'a',
+            description: 'desc',
+        });
+
+        expect(parseServer(null)).toEqual({ url: '' });
+        const s = parseServer({
+            url: 'test',
+            description: 'server desc',
+            variables: { port: { default: '80' } },
+        });
+        expect(s.url).toBe('test');
+        expect(s.description).toBe('server desc');
+        expect(s.variables?.['port']?.default).toBe('80');
+
+        expect(parseReference(null)).toEqual({
+            $ref: '',
+            summary: undefined,
+            description: undefined,
+        });
+        expect(parseReference({ $ref: '#/a', summary: 's', description: 'd' })).toEqual({
+            $ref: '#/a',
+            summary: 's',
+            description: 'd',
+        });
     });
 
-    it('should handle parsing empty or missing components', () => {
-        const c = parseComponents({});
-        expect(c).toEqual({});
+    it('should parse all schema properties and fallbacks cleanly', () => {
+        expect(parseSchema(null)).toEqual({});
+        const refSchema = parseSchema({ $ref: '#/components/schemas/Pet' });
+        expect(isReference(refSchema)).toBe(true);
+
+        const s = assertNotRef<SchemaObject>(
+            parseSchema({
+                title: 'MyTitle',
+                type: 'string',
+                format: 'email',
+                description: 'desc',
+                multipleOf: 2,
+                maximum: 10,
+                exclusiveMaximum: true,
+                minimum: 1,
+                exclusiveMinimum: true,
+                maxLength: 50,
+                minLength: 3,
+                pattern: '^[a-z]+$',
+                maxItems: 5,
+                minItems: 1,
+                uniqueItems: false,
+                maxProperties: 10,
+                minProperties: 1,
+                required: ['a'],
+                enum: ['a', 'b'],
+                allOf: [{ type: 'string' }],
+                oneOf: [{ type: 'number' }],
+                anyOf: [{ type: 'boolean' }],
+                not: { type: 'null' },
+                items: { type: 'string' },
+                properties: { a: { type: 'string' } },
+                additionalProperties: true,
+                default: 'def',
+                nullable: true,
+                readOnly: true,
+                writeOnly: false,
+                example: 'ex',
+                deprecated: true,
+                discriminator: { propertyName: 'type', mapping: { a: 'A' }, defaultMapping: 'A' },
+                xml: {
+                    name: 'test',
+                    namespace: 'ns',
+                    prefix: 'p',
+                    attribute: true,
+                    wrapped: false,
+                    nodeType: 'element',
+                },
+                externalDocs: { url: 'https://docs' },
+            }),
+        );
+
+        expect(s.title).toBe('MyTitle');
+        expect(s.multipleOf).toBe(2);
+        expect(s.maximum).toBe(10);
+        expect(s.exclusiveMaximum).toBe(true);
+        expect(s.minimum).toBe(1);
+        expect(s.exclusiveMinimum).toBe(true);
+        expect(s.maxLength).toBe(50);
+        expect(s.minLength).toBe(3);
+        expect(s.pattern).toBe('^[a-z]+$');
+        expect(s.maxItems).toBe(5);
+        expect(s.minItems).toBe(1);
+        expect(s.uniqueItems).toBe(false);
+        expect(s.maxProperties).toBe(10);
+        expect(s.minProperties).toBe(1);
+        expect(s.required).toEqual(['a']);
+        expect(s.enum).toEqual(['a', 'b']);
+        expect(s.allOf).toHaveLength(1);
+        expect(s.oneOf).toHaveLength(1);
+        expect(s.anyOf).toHaveLength(1);
+        expect(s.not).toBeDefined();
+        expect(s.items).toBeDefined();
+        expect(s.additionalProperties).toBe(true);
+        expect(s.default).toBe('def');
+        expect(s.nullable).toBe(true);
+        expect(s.readOnly).toBe(true);
+        expect(s.writeOnly).toBe(false);
+        expect(s.example).toBe('ex');
+        expect(s.deprecated).toBe(true);
+        expect(s.discriminator?.mapping?.['a']).toBe('A');
+        expect(s.discriminator?.defaultMapping).toBe('A');
+        expect(s.xml?.attribute).toBe(true);
+        expect(s.xml?.wrapped).toBe(false);
+        expect(s.xml?.nodeType).toBe('element');
+        expect(s.externalDocs?.url).toBe('https://docs');
+
+        const s2 = assertNotRef<SchemaObject>(
+            parseSchema({
+                additionalProperties: { type: 'string' },
+                discriminator: {},
+                xml: {},
+            }),
+        );
+        expect(
+            typeof s2.additionalProperties === 'object' && assertNotRef<SchemaObject>(s2.additionalProperties).type,
+        ).toBe('string');
+        expect(s2.discriminator?.propertyName).toBe('');
+        expect(s2.xml?.name).toBeUndefined();
     });
 
-    it('should handle external docs everywhere', () => {
-        const t = parseTag({ name: 't', externalDocs: { url: 'u' } });
+    it('should parse example, header, encoding, mediaType, requestBody, parameter, link, response, callback', () => {
+        expect(isReference(parseExample({ $ref: '#/ex' }))).toBe(true);
+        expect(parseExample(null)).toEqual({
+            summary: undefined,
+            description: undefined,
+            value: undefined,
+            externalValue: undefined,
+        });
+        const ex = assertNotRef<ExampleObject>(
+            parseExample({ summary: 's', description: 'd', value: 123, externalValue: 'http://ex' }),
+        );
+        expect(ex.value).toBe(123);
+
+        expect(isReference(parseHeader({ $ref: '#/h' }))).toBe(true);
+        expect(parseHeader(null)).toEqual({});
+        const hdr = assertNotRef<HeaderObject>(
+            parseHeader({
+                description: 'desc',
+                required: true,
+                deprecated: false,
+                schema: { type: 'string' },
+                example: 'val',
+            }),
+        );
+        expect(hdr.description).toBe('desc');
+        expect(hdr.required).toBe(true);
+        expect(hdr.deprecated).toBe(false);
+        expect(hdr.example).toBe('val');
+
+        expect(parseEncoding(null)).toEqual({});
+        const enc = parseEncoding({
+            contentType: 'text/plain',
+            style: 'form',
+            explode: false,
+            allowReserved: true,
+            headers: { 'X-H': { description: 'h' } },
+            prefixEncoding: { p: { contentType: 'text/csv' } },
+            itemEncoding: { i: { contentType: 'text/xml' } },
+        });
+        expect(enc.contentType).toBe('text/plain');
+        expect(enc.explode).toBe(false);
+        expect(enc.allowReserved).toBe(true);
+        expect(enc.prefixEncoding?.['p']?.contentType).toBe('text/csv');
+        expect(enc.itemEncoding?.['i']?.contentType).toBe('text/xml');
+
+        expect(parseMediaType(null)).toEqual({});
+        const mt = parseMediaType({
+            schema: { type: 'string' },
+            itemSchema: { type: 'number' },
+            example: 'ex',
+            examples: { e1: { value: 'v' } },
+            encoding: { f: { contentType: 'text/plain' } },
+            prefixEncoding: { p: { contentType: 'text/plain' } },
+            itemEncoding: { i: { contentType: 'text/plain' } },
+        });
+        expect(mt.example).toBe('ex');
+        expect(mt.itemSchema).toBeDefined();
+
+        expect(isReference(parseRequestBody({ $ref: '#/rb' }))).toBe(true);
+        expect(parseRequestBody(null)).toEqual({ content: {} });
+        const rb = assertNotRef<RequestBodyObject>(
+            parseRequestBody({
+                description: 'rb',
+                required: true,
+                content: { 'application/json': { schema: { type: 'object' } } },
+            }),
+        );
+        expect(rb.description).toBe('rb');
+        expect(rb.required).toBe(true);
+
+        expect(isReference(parseParameter({ $ref: '#/p' }))).toBe(true);
+        const defaultParam = assertNotRef<ParameterObject>(parseParameter(null));
+        expect(defaultParam.name).toBe('Unknown');
+        expect(defaultParam.in).toBe('query');
+
+        const fullParam = assertNotRef<ParameterObject>(
+            parseParameter({
+                name: 'p',
+                in: 'cookie',
+                description: 'd',
+                required: true,
+                deprecated: true,
+                allowEmptyValue: true,
+                style: 'form',
+                explode: false,
+                allowReserved: true,
+                schema: { type: 'string' },
+                example: 'e',
+                examples: { ex: { value: 1 } },
+                content: { 'text/plain': { schema: { type: 'string' } } },
+            }),
+        );
+        expect(fullParam.in).toBe('cookie');
+        expect(fullParam.allowEmptyValue).toBe(true);
+        expect(fullParam.explode).toBe(false);
+        expect(fullParam.allowReserved).toBe(true);
+
+        expect(isReference(parseLink({ $ref: '#/l' }))).toBe(true);
+        expect(parseLink(null)).toEqual({});
+        const lnk = assertNotRef<LinkObject>(
+            parseLink({
+                operationRef: '#/op',
+                operationId: 'opId',
+                parameters: { id: '$response.body#/id' },
+                requestBody: 'body',
+                description: 'desc',
+                server: { url: 'http://srv' },
+            }),
+        );
+        expect(lnk.operationId).toBe('opId');
+        expect(lnk.parameters?.['id']).toBe('$response.body#/id');
+
+        expect(isReference(parseResponse({ $ref: '#/r' }))).toBe(true);
+        expect(parseResponse(null)).toEqual({ description: '' });
+        const resp = assertNotRef<ResponseObject>(
+            parseResponse({
+                description: 'ok',
+                headers: { H: { description: 'h' } },
+                content: { 'text/plain': {} },
+                links: { L: { operationId: 'op' } },
+            }),
+        );
+        expect(resp.description).toBe('ok');
+        expect(resp.headers?.['H']).toBeDefined();
+        expect(resp.links?.['L']).toBeDefined();
+
+        expect(parseResponses(null)).toEqual({});
+        const resps = parseResponses({
+            default: { description: 'def' },
+            '200': { description: 'ok' },
+        });
+        expect(assertNotRef<ResponseObject>(resps.default).description).toBe('def');
+        expect(assertNotRef<ResponseObject>(resps['200']).description).toBe('ok');
+
+        expect(isReference(parseCallback({ $ref: '#/cb' }))).toBe(true);
+        expect(parseCallback(null)).toEqual({});
+        const cb = assertNotRef<CallbackObject>(parseCallback({ 'http://url': { get: { operationId: 'test' } } }));
+        expect(assertNotRef<PathItemObject>(cb['http://url']).get?.operationId).toBe('test');
+    });
+
+    it('should parse security requirement, operation, pathItem, paths, oauthFlow, securityScheme, components, tag', () => {
+        expect(parseExternalDocs(null)).toEqual({ url: '', description: undefined });
+        expect(parseSecurityRequirement(null)).toEqual({});
+        const r = parseSecurityRequirement({ api_key: [], invalid: 'not-array' });
+        expect(r['api_key']).toEqual([]);
+        expect(r['invalid']).toEqual([]);
+
+        expect(parseOperation(null)).toEqual({});
+        const op = parseOperation({
+            tags: ['t'],
+            summary: 's',
+            description: 'd',
+            externalDocs: { url: 'u' },
+            operationId: 'id',
+            parameters: [{ name: 'p', in: 'header' }],
+            requestBody: { content: {} },
+            responses: { '200': { description: 'ok' } },
+            callbacks: { cb: { '/x': {} } },
+            deprecated: true,
+            security: [{ a: ['b'] }],
+            servers: [{ url: 'u' }],
+        });
+        expect(op.deprecated).toBe(true);
+        expect(op.tags).toEqual(['t']);
+
+        expect(isReference(parsePathItem({ $ref: '#/paths/x' }))).toBe(true);
+        expect(parsePathItem(null)).toEqual({});
+        expect(parsePaths(null)).toEqual({});
+        expect(parsePaths({ invalid: {}, '/valid': { get: { operationId: 'v' } } })).toEqual({
+            '/valid': { get: { operationId: 'v' } },
+        });
+
+        expect(parseOAuthFlow(null)).toEqual({ scopes: {} });
+        const flow = parseOAuthFlow({
+            authorizationUrl: 'url',
+            tokenUrl: 'token',
+            refreshUrl: 'refresh',
+            deviceAuthorizationUrl: 'device',
+            scopes: { a: 'a' },
+        });
+        expect(flow.authorizationUrl).toBe('url');
+        expect(flow.tokenUrl).toBe('token');
+        expect(flow.refreshUrl).toBe('refresh');
+        expect(flow.deviceAuthorizationUrl).toBe('device');
+        expect(flow.scopes['a']).toBe('a');
+
+        expect(isReference(parseSecurityScheme({ $ref: '#/sec' }))).toBe(true);
+        expect(parseSecurityScheme(null)).toEqual({ type: 'http' });
+        const ss = assertNotRef<SecuritySchemeObject>(
+            parseSecurityScheme({
+                type: 'oauth2',
+                description: 'd',
+                name: 'n',
+                in: 'cookie',
+                scheme: 'bearer',
+                bearerFormat: 'JWT',
+                openIdConnectUrl: 'http://oid',
+                oauth2MetadataUrl: 'http://meta',
+                flows: {
+                    implicit: { authorizationUrl: 'url', scopes: { read: 'read' } },
+                    password: { tokenUrl: 't' },
+                    clientCredentials: { tokenUrl: 't' },
+                    authorizationCode: { authorizationUrl: 'a', tokenUrl: 't' },
+                    deviceAuthorization: { deviceAuthorizationUrl: 'd' },
+                },
+            }),
+        );
+        expect(ss.in).toBe('cookie');
+        expect(ss.flows?.implicit?.scopes['read']).toBe('read');
+        expect(ss.flows?.password?.tokenUrl).toBe('t');
+        expect(ss.flows?.clientCredentials?.tokenUrl).toBe('t');
+        expect(ss.flows?.authorizationCode?.authorizationUrl).toBe('a');
+        expect(ss.flows?.deviceAuthorization?.deviceAuthorizationUrl).toBe('d');
+
+        expect(parseComponents(null)).toEqual({});
+        expect(parseTag(null)).toEqual({ name: 'Unknown' });
+        const t = parseTag({
+            name: 't',
+            summary: 's',
+            description: 'd',
+            externalDocs: { url: 'u' },
+            parent: 'p',
+            kind: 'k',
+        });
         expect(t.externalDocs?.url).toBe('u');
+        expect(t.parent).toBe('p');
+        expect(t.kind).toBe('k');
     });
 
     it('should handle mapSdkExamples with no paths', () => {
-        const doc: any = { spec: {}, codeExamples: {} };
-        mapSdkExamples(doc, []); // should not throw
+        const doc: DocData = {
+            spec: { openapi: '3.2.0', info: { title: 'T', version: '1' } },
+            codeExamples: {},
+        };
+        mapSdkExamples(doc, []);
+        expect(doc.codeExamples).toEqual({});
     });
 
     it('should handle normalizeSpec missing jsonSchemaDialect and webhooks', () => {
-        const doc: any = normalizeSpec(`
+        const doc = normalizeSpec(`
 openapi: 3.2.0
 info:
   title: Test
@@ -84,7 +499,7 @@ webhooks:
         '200':
           description: OK
 `);
-        expect((doc as any).spec.webhooks?.myHook).toBeDefined();
+        expect(doc.spec.webhooks?.['myHook']).toBeDefined();
     });
 });
 
@@ -113,11 +528,11 @@ paths:
         const result = normalizeSpec(yamlStr);
         expect(result.spec.info.title).toBe('Test API');
         expect(result.spec.info.version).toBe('1.0.1');
-        const paths: any = result.spec.paths;
+        const paths = result.spec.paths;
         expect(paths).toBeDefined();
-        expect(paths!['/users']).toBeDefined();
-        expect((paths!['/users'] as PathItemObject).get?.operationId).toBe('getUsers');
-        expect((paths!['/users'] as PathItemObject).get?.parameters?.[0] as any).toBeDefined();
+        const usersPath = assertNotRef<PathItemObject>(paths?.['/users']);
+        expect(usersPath.get?.operationId).toBe('getUsers');
+        expect(usersPath.get?.parameters?.[0]).toBeDefined();
     });
 
     it('should handle empty or invalid spec gracefully', () => {
@@ -146,12 +561,12 @@ paths:
     get:
       operationId: getUsers
 `;
-        const docData: any = normalizeSpec(yamlStr);
+        const docData = normalizeSpec(yamlStr);
         const examples: CodeExample[] = [{ language: 'rust', filepath: 'getUsers.rs', content: 'fn get_users() {}' }];
 
         mapSdkExamples(docData, examples);
-        expect((docData as any).codeExamples['getUsers']).toBeDefined();
-        expect((docData as any).codeExamples['getUsers'][0].language).toBe('rust');
+        expect(docData.codeExamples['getUsers']).toBeDefined();
+        expect(docData.codeExamples['getUsers']?.[0]?.language).toBe('rust');
     });
 });
 
@@ -175,10 +590,13 @@ paths:
               schema:
                 type: string
 `;
-        const docData: any = normalizeSpec(yamlStr);
-        const param = (docData as any).spec.paths!['/test'].get!.parameters![0] as any;
-        expect(param.examples.ex1.value).toBe('foo');
-        expect(param.content['application/json'].schema.type).toBe('string');
+        const docData = normalizeSpec(yamlStr);
+        const pathItem = assertNotRef<PathItemObject>(docData.spec.paths?.['/test']);
+        const param = assertNotRef<ParameterObject>(pathItem.get?.parameters?.[0]);
+        const ex1 = assertNotRef<ExampleObject>(param.examples?.['ex1']);
+        expect(ex1.value).toBe('foo');
+        const schema = assertNotRef<SchemaObject>(param.content?.['application/json']?.schema);
+        expect(schema.type).toBe('string');
     });
 
     it('should ignore unrecognised sdk examples', () => {
@@ -191,9 +609,9 @@ paths:
     get:
       operationId: myOperation
 `;
-        const docData: any = normalizeSpec(yamlStr);
+        const docData = normalizeSpec(yamlStr);
         mapSdkExamples(docData, [{ language: 'rust', filepath: 'unmatched.rs', content: 'test' }]);
-        expect((docData as any).codeExamples['myOperation']).toBeUndefined();
+        expect(docData.codeExamples['myOperation']).toBeUndefined();
     });
 });
 
@@ -339,37 +757,30 @@ tags:
 externalDocs:
   url: http://ext
 `;
-        const docData: any = normalizeSpec(yamlStr);
-        expect(docData).toBeDefined();
+        const docData = normalizeSpec(yamlStr);
+        expect(docData.spec.jsonSchemaDialect).toBe('https://json-schema.org/draft/2020-12/schema');
+        expect(docData.spec.components?.schemas?.['Sch']).toBeDefined();
+        expect(docData.spec.components?.links?.['Lnk']).toBeDefined();
     });
 });
 
 describe('additional coverage cases', () => {
-    it('should cover empty components', () => {
-        const yamlStr = `
-openapi: 3.1.0
+    it('should cover empty components, tags, security, and fallback openapi version', () => {
+        const doc1 = normalizeSpec(`
 info:
   title: API
 components: {}
-`;
-        expect(normalizeSpec(yamlStr)).toBeDefined();
-    });
-
-    it('should cover empty tags and security', () => {
-        const yamlStr = `
-openapi: 3.1.0
-info:
-  title: API
 tags:
   - {}
 security:
   - {}
-`;
-        expect(normalizeSpec(yamlStr)).toBeDefined();
-    });
+`);
+        expect(doc1.spec.openapi).toBe('3.2.0');
+        expect(doc1.spec.components).toEqual({});
+        expect(doc1.spec.tags?.[0]?.name).toBe('Unknown');
+        expect(doc1.spec.security?.[0]).toEqual({});
 
-    it('should cover empty security scheme and flow', () => {
-        const yamlStr = `
+        const doc2 = normalizeSpec(`
 openapi: 3.1.0
 info:
   title: API
@@ -380,330 +791,240 @@ components:
       in: invalid_in
     S2:
       type: apiKey
+      in: query
       flows:
         implicit: {}
-`;
-        expect(normalizeSpec(yamlStr)).toBeDefined();
+    S3:
+      $ref: "#/comp"
+`);
+        const s1 = assertNotRef<SecuritySchemeObject>(doc2.spec.components?.securitySchemes?.['S1']);
+        expect(s1.type).toBe('http');
+        expect(s1.in).toBeUndefined();
+        const s2 = assertNotRef<SecuritySchemeObject>(doc2.spec.components?.securitySchemes?.['S2']);
+        expect(s2.type).toBe('apiKey');
+        expect(s2.in).toBe('query');
+        expect(isReference(doc2.spec.components?.securitySchemes?.['S3'])).toBe(true);
     });
 });
 
 describe('mapSdkExamples branches', () => {
-    it('should handle empty paths and missing operations', () => {
-        const docData: any = { spec: {} };
-        mapSdkExamples(docData, []);
-        (docData as any).spec.paths = {
-            '/r': { $ref: '#/comp' },
+    it('should handle empty paths and reference path items', () => {
+        const docData: DocData = {
+            spec: {
+                openapi: '3.2.0',
+                info: { title: 'T', version: '1' },
+                paths: { '/r': { $ref: '#/comp' } },
+            },
+            codeExamples: {},
         };
         mapSdkExamples(docData, []);
+        expect(docData.codeExamples).toEqual({});
     });
 
-    it('should map all method types', () => {
-        const docData: any = {
+    it('should map all method types including query and additionalOperations', () => {
+        const docData: DocData = {
             spec: {
+                openapi: '3.2.0',
+                info: { title: 'T', version: '1' },
                 paths: {
                     '/all': {
-                        get: { operationId: 'get' },
-                        put: { operationId: 'put' },
-                        post: { operationId: 'post' },
-                        delete: { operationId: 'delete' },
-                        options: { operationId: 'options' },
-                        head: { operationId: 'head' },
-                        patch: { operationId: 'patch' },
-                        trace: { operationId: 'trace' },
+                        get: { operationId: 'getOp' },
+                        put: { operationId: 'putOp' },
+                        post: { operationId: 'postOp' },
+                        delete: { operationId: 'deleteOp' },
+                        options: { operationId: 'optionsOp' },
+                        head: { operationId: 'headOp' },
+                        patch: { operationId: 'patchOp' },
+                        trace: { operationId: 'traceOp' },
+                        query: { operationId: 'queryOp' },
+                        additionalOperations: {
+                            COPY: { operationId: 'copyOp' },
+                        },
                     },
                 },
             },
             codeExamples: {
-                get: [], // pre-existing to hit line 518 branch
+                getOp: [],
             },
         };
         mapSdkExamples(docData, [
-            { language: 'x', filepath: 'get', content: 'x' },
-            { language: 'x', filepath: 'put', content: 'x' },
-            { language: 'x', filepath: 'post', content: 'x' },
-            { language: 'x', filepath: 'delete', content: 'x' },
-            { language: 'x', filepath: 'options', content: 'x' },
-            { language: 'x', filepath: 'head', content: 'x' },
-            { language: 'x', filepath: 'patch', content: 'x' },
-            { language: 'x', filepath: 'trace', content: 'x' },
+            { language: 'x', filepath: 'getOp', content: 'x' },
+            { language: 'x', filepath: 'putOp', content: 'x' },
+            { language: 'x', filepath: 'postOp', content: 'x' },
+            { language: 'x', filepath: 'deleteOp', content: 'x' },
+            { language: 'x', filepath: 'optionsOp', content: 'x' },
+            { language: 'x', filepath: 'headOp', content: 'x' },
+            { language: 'x', filepath: 'patchOp', content: 'x' },
+            { language: 'x', filepath: 'traceOp', content: 'x' },
+            { language: 'x', filepath: 'queryOp', content: 'x' },
+            { language: 'x', filepath: 'copyOp', content: 'x' },
             { language: 'x', filepath: 'unmatched', content: 'x' },
         ]);
-        expect((docData as any).codeExamples.get.length).toBe(1);
-        expect((docData as any).codeExamples.trace.length).toBe(1);
-    });
-
-    it('should handle operations missing operationId and ignore unmatched files', () => {
-        const docData: any = {
-            spec: { paths: { '/no': { get: {} } } },
-            codeExamples: {},
-        };
-        mapSdkExamples(docData, [{ language: 'x', filepath: 'unmatched', content: 'x' }]);
-        expect((docData as any).codeExamples['get-/no']).toBeUndefined();
+        expect(docData.codeExamples['getOp']?.length).toBe(1);
+        expect(docData.codeExamples['traceOp']?.length).toBe(1);
+        expect(docData.codeExamples['queryOp']?.length).toBe(1);
+        expect(docData.codeExamples['copyOp']?.length).toBe(1);
     });
 
     it('should match by route slug and method if operationId is missing', () => {
-        const docData: any = {
-            spec: { paths: { '/users/{id}': { get: {} } } },
+        const docData: DocData = {
+            spec: {
+                openapi: '3.2.0',
+                info: { title: 'T', version: '1' },
+                paths: { '/users/{id}': { get: {} } },
+            },
             codeExamples: {},
         };
-        mapSdkExamples(docData, [{ language: 'x', filepath: '_users__id__get.ts', content: 'x' }]);
-        expect((docData as any).codeExamples['get-/users/{id}'].length).toBe(1);
+        mapSdkExamples(docData, [
+            { language: 'x', filepath: '_users__id__get.ts', content: 'x' },
+            { language: 'x', filepath: '_users__id__post.ts', content: 'x' },
+        ]);
+        expect(docData.codeExamples['get-/users/{id}']?.length).toBe(1);
+    });
+
+    it('should normalize standalone Arazzo specs, companion Arazzo specs, $self, webhooks, and map workflow examples', () => {
+        const arazzoWithSelf = normalizeSpec(
+            JSON.stringify({
+                arazzo: '1.1.0',
+                $self: 'https://example.com/arazzo.json',
+                info: { title: 'Standalone Arazzo', version: '1.0.0' },
+                sourceDescriptions: [{ name: 'api', url: './openapi.json', type: 'openapi' }],
+                workflows: [{ workflowId: 'my-workflow', steps: [{ stepId: 's1' }] }],
+            }),
+        );
+        expect(arazzoWithSelf.specKind).toBe('arazzo');
+        expect(arazzoWithSelf.spec.$self).toBe('https://example.com/arazzo.json');
+
+        // Map workflow examples when no OpenAPI operations exist
+        delete arazzoWithSelf.workflowCodeExamples;
+        mapSdkExamples(arazzoWithSelf, [
+            { language: 'ts', filepath: 'workflow_my-workflow', content: 'code1' },
+            { language: 'python', filepath: '_workflows_my_workflow', content: 'code2' },
+            { language: 'go', filepath: 'unmatched_file', content: 'code3' },
+        ]);
+        expect(arazzoWithSelf.workflowCodeExamples?.['my-workflow']).toHaveLength(2);
+
+        const arazzoNoSelf = normalizeSpec(
+            JSON.stringify({
+                arazzo: '1.1.0',
+                info: { title: 'No Self Arazzo', version: '1.0.0' },
+                sourceDescriptions: [],
+                workflows: [{ workflowId: 'wf2', steps: [{ stepId: 's1' }] }],
+            }),
+        );
+        expect(arazzoNoSelf.spec.$self).toBeUndefined();
+
+        const combined = normalizeSpec(
+            JSON.stringify({
+                openapi: '3.2.0',
+                $self: 'https://example.com/openapi.json',
+                info: { title: 'Combined API', version: '1.0.0' },
+                webhooks: {
+                    orderHook: {
+                        post: { operationId: 'onOrderHook', responses: {} },
+                        put: { responses: {} },
+                    },
+                    refHook: { $ref: '#/components/pathItems/Ref' },
+                },
+            }),
+            JSON.stringify({
+                arazzo: '1.1.0',
+                info: { title: 'Companion Arazzo', version: '1.0.0' },
+                sourceDescriptions: [{ name: 'api', url: './openapi.json' }],
+                workflows: [{ workflowId: 'orderWorkflow', steps: [{ stepId: 's1', operationId: 'onOrderHook' }] }],
+            }),
+        );
+        expect(combined.specKind).toBe('combined');
+        expect(combined.spec.$self).toBe('https://example.com/openapi.json');
+        mapSdkExamples(combined, [
+            { language: 'ts', filepath: 'onOrderHook.ts', content: 'whCode' },
+            { language: 'ts', filepath: 'orderWorkflow.ts', content: 'wfCode' },
+        ]);
+        expect(combined.codeExamples['onOrderHook']).toHaveLength(1);
+        expect(combined.workflowCodeExamples?.['orderWorkflow']).toHaveLength(1);
     });
 });
 
-describe('parser missing lines coverage', () => {
-    it('should parse full parameter with example', () => {
-        const doc: any = normalizeSpec(`
-openapi: 3.0.0
-info:
-  title: T
-  version: 1
-paths:
-  /t:
-    get:
-      parameters:
-        - name: id
-          in: query
-          example: 123
-`);
-        const p = (doc as any).spec.paths!['/t'].get!.parameters![0] as any;
-        expect(p.example).toBe(123);
+describe('OpenAPI 3.2.0 extensions & path item details', () => {
+    it('should parse servers and parameters in pathItem and OpenAPI 3.2.0 fields', () => {
+        const doc = normalizeSpec(
+            [
+                'openapi: 3.2.0',
+                'info:',
+                '  title: Test',
+                '  version: 1.0.0',
+                '  summary: Info summary',
+                'tags:',
+                '  - name: testTag',
+                '    summary: sum',
+                '    parent: parent',
+                '    kind: custom',
+                'components:',
+                '  mediaTypes:',
+                '    myMediaType:',
+                '      itemSchema: { type: string }',
+                '      prefixEncoding:',
+                '        myProp:',
+                '          contentType: text/plain',
+                '      itemEncoding:',
+                '        myProp:',
+                '          contentType: text/plain',
+                '  securitySchemes:',
+                '    myOAuth2:',
+                '      type: oauth2',
+                '      oauth2MetadataUrl: http://example.com/oauth2',
+                '      flows:',
+                '        deviceAuthorization:',
+                '          deviceAuthorizationUrl: http://example.com/device',
+                '          scopes:',
+                '            read: Read access',
+                '  schemas:',
+                '    MySchema:',
+                '      discriminator:',
+                '        propertyName: kind',
+                '        defaultMapping: kind1',
+                '      xml:',
+                '        nodeType: attribute',
+                '  parameters:',
+                '    myParam:',
+                '      name: myParam',
+                '      in: query',
+                '      content:',
+                '        text/plain:',
+                '          encoding:',
+                '            myProp:',
+                '              prefixEncoding:',
+                '                myProp:',
+                '                  contentType: text/plain',
+                '              itemEncoding:',
+                '                myProp:',
+                '                  contentType: text/plain',
+                'paths:',
+                '  /test:',
+                '    summary: Path summary',
+                '    description: Path desc',
+                '    servers:',
+                '      - url: https://path.server',
+                '    parameters:',
+                '      - name: id',
+                '        in: query',
+                '        example: 123',
+                '    query:',
+                '      operationId: queryOp',
+                '    additionalOperations:',
+                '      SUBSCRIBE:',
+                '        operationId: subscribeOp',
+            ].join(String.fromCharCode(10)),
+        );
+        expect(doc.spec.info.summary).toBe('Info summary');
+        const testPath = assertNotRef<PathItemObject>(doc.spec.paths?.['/test']);
+        expect(testPath.summary).toBe('Path summary');
+        expect(testPath.description).toBe('Path desc');
+        expect(testPath.servers?.[0]?.url).toBe('https://path.server');
+        expect(assertNotRef<ParameterObject>(testPath.parameters?.[0]).example).toBe(123);
+        expect(testPath.query?.operationId).toBe('queryOp');
+        expect(testPath.additionalOperations?.['SUBSCRIBE']?.operationId).toBe('subscribeOp');
+        const mediaType = assertNotRef<MediaTypeObject>(doc.spec.components?.mediaTypes?.['myMediaType']);
+        expect(mediaType.prefixEncoding?.['myProp']?.contentType).toBe('text/plain');
     });
-
-    it('should parse callbacks and externalDocs', () => {
-        const doc: any = normalizeSpec(`
-openapi: 3.0.0
-info:
-  title: T
-  version: 1
-externalDocs:
-  url: https://ext.com
-  description: Ext
-paths:
-  /t:
-    get:
-      callbacks:
-        myCallback:
-          '{$request.query.url}':
-            post:
-              responses:
-                '200':
-                  description: ok
-`);
-        expect((doc as any).spec.externalDocs?.url).toBe('https://ext.com');
-        expect((doc as any).spec.paths!['/t'].get!.callbacks?.myCallback).toBeDefined();
-    });
-
-    it('should parse security requirement with non-array', () => {
-        const doc: any = normalizeSpec(`
-openapi: 3.0.0
-info:
-  title: T
-  version: 1
-security:
-  - auth: "not-an-array"
-`);
-        expect((doc as any).spec.security![0].auth).toEqual([]);
-    });
-
-    it('should parse servers and parameters in pathItem', () => {
-        const doc: any = normalizeSpec(`
-openapi: 3.0.0
-info:
-  title: T
-  version: 1
-paths:
-  /t:
-    servers:
-      - url: https://server
-    parameters:
-      - name: id
-        in: query
-    get:
-      responses:
-        '200':
-          description: ok
-`);
-        expect((doc as any).spec.paths!['/t'].servers![0].url).toBe('https://server');
-        expect(((doc as any).spec.paths!['/t'].parameters![0] as any).name).toBe('id');
-    });
-
-    it('should parse oauth2 implicit flow', () => {
-        const doc: any = normalizeSpec(`
-openapi: 3.0.0
-info:
-  title: T
-  version: 1
-components:
-  securitySchemes:
-    oauth:
-      type: oauth2
-      flows:
-        implicit:
-          authorizationUrl: https://auth
-          scopes:
-            read: read
-`);
-        expect((doc as any).spec.components?.securitySchemes?.oauth.flows?.implicit?.authorizationUrl).toBe('https://auth');
-    });
-
-    it('should cover missing fields in normalizeSpec', () => {
-        const yamlStr = `
-info:
-  title: API
-components:
-  securitySchemes:
-    S1:
-      $ref: "#/comp"
-`;
-        expect(normalizeSpec(yamlStr)).toBeDefined();
-    });
-});
-
-    it('should parse OAuthFlow', () => {
-        const flow = parseOAuthFlow({ authorizationUrl: 'url', tokenUrl: 'token', refreshUrl: 'refresh', scopes: { a: 'a' } });
-        expect(flow.authorizationUrl).toBe('url');
-        expect(flow.tokenUrl).toBe('token');
-        expect(flow.refreshUrl).toBe('refresh');
-        expect((flow as any).scopes.a).toBe('a');
-    });
-
-    it('should parse ExternalDocs', () => {
-        const doc: any = parseExternalDocs({ url: 'url', description: 'desc' });
-        expect(doc.url).toBe('url');
-        expect(doc.description).toBe('desc');
-    });
-
-    it('should parse Callback', () => {
-        const cb = parseCallback({ 'http://url': { get: { operationId: 'test' } } });
-        expect((cb as any)['http://url'].get.operationId).toBe('test');
-    });
-
-    it('should parse Paths and references', () => {
-        const p = parsePathItem({ $ref: '#/paths/x' });
-        expect((p as any).$ref).toBe('#/paths/x');
-    });
-
-
-it("should cover unhandled flows", () => { parseSecurityScheme({type:"oauth2", flows: {password: {authorizationUrl: ""}, clientCredentials: {authorizationUrl: ""}, authorizationCode: {authorizationUrl: ""}}}); });
-
-it("should parseResponse with reference", () => { parseResponse({$ref:"#/some/ref"}); });
-
-it("should parsePathItem with reference", () => { parsePathItem({$ref:"#/some/ref"}); });
-
-it("should parseCallback with reference", () => { parseCallback({$ref:"#/some/ref"}); });
-
-it("should parseParameter required and deprecated", () => { parseParameter({name:"test", in:"query", required:true, deprecated:true}); });
-
-it("should parseExternalDocs missing url", () => { parseExternalDocs({}); });
-
-it("should parsePaths ignore non-paths", () => { parsePaths({"invalid": {}}); });
-
-it("should cover unhandled types", () => { parseMediaType({schema: {type: "string"}}); parseParameter({name: "", in: "query"}); parseResponse({}); });
-
-it("should cover unhandled types 2", () => { parseEncoding({contentType: "a", style: "a", explode: false, allowReserved: true, headers: {a: {description: "desc", required: true, deprecated: false, schema: {}, example: "ex"}}}); });
-
-it("should cover parameter types", () => { parseParameter({name: "", in: "path", style: "a", allowReserved: true, explode: false}); });
-
-it("should cover setting empty obj to parseMediaType", async () => { parseMediaType({schema: undefined}); });
-
-it("should cover setting empty obj to parseExample", async () => { parseExample({}); });
-
-it("should cover empty encode object", async () => { parseEncoding({}); });
-
-it("should cover setting reference to parseHeader", async () => { parseHeader({$ref:""}); });
-
-it("should cover setting reference to parseExample", async () => { parseExample({$ref:""}); });
-
-it("should cover setting reference to parseSchema missing properties", async () => { parseSchema({discriminator: {propertyName: ""}, xml: {}}); });
-
-it("should cover setting reference to parseSchema missing properties 2", async () => { parseSchema({additionalProperties: true}); });
-
-it("should cover setting reference to parseSchema missing properties 3", async () => { parseSchema({minLength: 1}); });
-
-it("should cover setting reference to parseSchema missing properties 4", async () => { parseSchema({minLength: 1, maxLength: 1, minItems: 1, maxItems: 1, uniqueItems: false, minProperties: 1, maxProperties: 1}); });
-
-it("should cover setting reference to parseSchema missing properties 5", async () => { parseSchema({multipleOf: 1, maximum: 1, exclusiveMaximum: true, minimum: 1, exclusiveMinimum: true, pattern: "a"}); });
-
-it("should cover setting reference to parseSchema missing properties 6", async () => { parseSchema({enum: ["a"], allOf: [{}], oneOf: [{}], anyOf: [{}], not: {}, items: {}}); });
-
-it("should cover setting reference to parseSchema missing properties 7", async () => { parseSchema({title: "a"}); });
-
-it("should throw missing info", async () => { try { parseInfo(null); } catch (e) {} });
-
-it("should cover setting reference to parseSchema missing properties 8", async () => { parseLicense({identifier: ""}); parseContact({url: ""}); parseServerVariable({description: "a"}); });
-
-it("should cover setting reference to parseSchema missing properties 9", async () => { parseReference({$ref:"a", summary: "s", description: "d"}); });
-
-it("should cover empty server url", async () => { parseServer({}); });
-
-it("should cover setting reference to parseSchema missing properties 10", async () => { parseSchema({additionalProperties: {}}); });
-
-it("should cover empty parameter", async () => { parseParameter({}); });
-
-it("should cover info missing title", async () => { parseInfo({}); });
-
-it("should cover empty header", async () => { parseHeader({}); });
-it("should cover OpenAPI 3.2.0 extensions", async () => {
-    const spec: any = normalizeSpec([
-        "openapi: 3.2.0",
-        "info:",
-        "  title: Test",
-        "  version: 1.0.0",
-        "tags:",
-        "  - name: testTag",
-        "    summary: sum",
-        "    parent: parent",
-        "    kind: custom",
-        "components:",
-        "  mediaTypes:",
-        "    myMediaType:",
-        "      itemSchema: { type: string }",
-        "      prefixEncoding:",
-        "        myProp:",
-        "          contentType: text/plain",
-        "      itemEncoding:",
-        "        myProp:",
-        "          contentType: text/plain",
-        "  securitySchemes:",
-        "    myOAuth2:",
-        "      type: oauth2",
-        "      oauth2MetadataUrl: http://example.com/oauth2",
-        "      flows:",
-        "        deviceAuthorization:",
-        "          deviceAuthorizationUrl: http://example.com/device",
-        "          scopes:",
-        "            read: Read access",
-        "  schemas:",
-        "    MySchema:",
-        "      discriminator:",
-        "        propertyName: kind",
-        "        defaultMapping: kind1",
-        "      xml:",
-        "        nodeType: attribute",
-        "  parameters:",
-        "    myParam:",
-        "      name: myParam",
-        "      in: query",
-        "      content:",
-        "        text/plain:",
-        "          encoding:",
-        "            myProp:",
-        "              prefixEncoding:",
-        "                myProp:",
-        "                  contentType: text/plain",
-        "              itemEncoding:",
-        "                myProp:",
-        "                  contentType: text/plain",
-        "paths:",
-        "  /test:",
-        "    query:",
-        "      operationId: queryOp",
-        "    additionalOperations:",
-        "      SUBSCRIBE:",
-        "        operationId: subscribeOp"
-    ].join('\n'));
-    expect((spec as any).spec.paths?.['/test'].query?.operationId).toBe('queryOp');
-    expect((spec as any).spec.paths?.['/test'].additionalOperations?.['SUBSCRIBE']?.operationId).toBe('subscribeOp');
-    expect((spec as any).spec.components?.mediaTypes?.['myMediaType'].prefixEncoding?.['myProp'].contentType).toBe('text/plain');
 });

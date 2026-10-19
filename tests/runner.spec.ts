@@ -1,5 +1,8 @@
+/**
+ * Unit tests for `cdd-ctl` subprocess runner, output parser, and fallback generator (`src/runner.ts`).
+ * @module runner.spec
+ */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
@@ -13,14 +16,43 @@ import {
 } from '../src/runner';
 import { OpenAPI320 } from '../src/types';
 
+/**
+ * Standard stdout/stderr result payload passed to `execFile` callbacks.
+ */
+interface ExecFileResult {
+    /** Standard output string. */
+    stdout: string;
+    /** Standard error string. */
+    stderr: string;
+}
+
+/**
+ * Callback signature invoked by the mocked `execFile` implementation.
+ */
+type ExecFileCallback = (error: Error | null, result?: ExecFileResult) => void;
+
+/** Hoisted strongly-typed mock for `node:child_process.execFile`. */
+const { execFileMock } = vi.hoisted(() => ({
+    execFileMock: vi.fn<(cmd: string, cmdArgs: readonly string[], cb: ExecFileCallback) => void>(),
+}));
+
 vi.mock('node:child_process', () => ({
-    execFile: vi.fn(),
+    execFile: execFileMock,
 }));
 
 vi.mock('node:fs', () => ({
     default: { existsSync: vi.fn() },
     existsSync: vi.fn(),
 }));
+
+/**
+ * Helper to mock `execFile` with a strongly-typed implementation.
+ * @param handler Function receiving args and invoking the callback.
+ * @returns The mocked `execFile` spy.
+ */
+function mockExecFileWith(handler: (cmd: string, cmdArgs: readonly string[], cb: ExecFileCallback) => void) {
+    return execFileMock.mockImplementation(handler);
+}
 
 describe('runner.ts', () => {
     afterEach(() => {
@@ -29,6 +61,11 @@ describe('runner.ts', () => {
     });
 
     describe('resolveCddCtlPath', () => {
+        it('should expose supported languages list', () => {
+            expect(SUPPORTED_LANGUAGES).toContain('rust');
+            expect(SUPPORTED_LANGUAGES).toContain('python-all');
+        });
+
         it('should return process.env.CDD_CTL_PATH if it exists', () => {
             process.env['CDD_CTL_PATH'] = '/custom/path/cdd-ctl';
             vi.mocked(fs.existsSync).mockReturnValueOnce(true);
@@ -56,80 +93,77 @@ describe('runner.ts', () => {
 
     describe('runCddCtl', () => {
         it('should securely execute cdd-ctl with the correct arguments', async () => {
-            const mockExecFile: any = vi.mocked(execFile).mockImplementation((...args: any[]) => {
-                const callback = args[args.length - 1];
-                callback(null, { stdout: 'mock_stdout', stderr: 'mock_stderr' });
-                return {} as any;
+            let capturedCmd = '';
+            let capturedArgs: readonly string[] = [];
+            const mockExec = mockExecFileWith((cmd, cmdArgs, cb) => {
+                capturedCmd = cmd;
+                capturedArgs = cmdArgs;
+                cb(null, { stdout: 'mock_stdout', stderr: 'mock_stderr' });
             });
 
             const stdout = await runCddCtl('typescript', 'spec.json');
 
             expect(stdout).toBe('mock_stdout');
-            expect(mockExecFile).toHaveBeenCalledTimes(1);
-            expect(mockExecFile.mock.calls[0][0]).toBe('./cdd-ctl');
-            expect(mockExecFile.mock.calls[0][1]).toEqual(['typescript', 'to_docs_json', '-i', 'spec.json']);
+            expect(mockExec).toHaveBeenCalledTimes(1);
+            expect(capturedCmd).toBe('./cdd-ctl');
+            expect(capturedArgs).toEqual(['typescript', 'to_docs_json', '-i', 'spec.json']);
         });
 
         it('should allow overriding the cdd-ctl binary path', async () => {
-            const mockExecFile: any = vi.mocked(execFile).mockImplementation((...args: any[]) => {
-                const callback = args[args.length - 1];
-                callback(null, { stdout: 'success', stderr: '' });
-                return {} as any;
+            let capturedCmd = '';
+            let capturedArgs: readonly string[] = [];
+            mockExecFileWith((cmd, cmdArgs, cb) => {
+                capturedCmd = cmd;
+                capturedArgs = cmdArgs;
+                cb(null, { stdout: 'success', stderr: '' });
             });
 
-            const stdout = await runCddCtl('python', 'spec.yaml', { cddCtlPath: '/usr/local/bin/cdd-ctl' });
+            const stdout = await runCddCtl('python', 'spec.yaml', {
+                cddCtlPath: '/usr/local/bin/cdd-ctl',
+            });
 
             expect(stdout).toBe('success');
-            expect(mockExecFile.mock.calls[0][0]).toBe('/usr/local/bin/cdd-ctl');
-            expect(mockExecFile.mock.calls[0][1]).toEqual(['python', 'to_docs_json', '-i', 'spec.yaml']);
+            expect(capturedCmd).toBe('/usr/local/bin/cdd-ctl');
+            expect(capturedArgs).toEqual(['python', 'to_docs_json', '-i', 'spec.yaml']);
         });
 
         it('should pass --no-imports flag when noImports is true', async () => {
-            const mockExecFile: any = vi.mocked(execFile).mockImplementation((...args: any[]) => {
-                const callback = args[args.length - 1];
-                callback(null, { stdout: 'success', stderr: '' });
-                return {} as any;
+            let capturedArgs: readonly string[] = [];
+            mockExecFileWith((_cmd, cmdArgs, cb) => {
+                capturedArgs = cmdArgs;
+                cb(null, { stdout: 'success', stderr: '' });
             });
 
             await runCddCtl('go', 'spec.json', { noImports: true });
-            expect(mockExecFile.mock.calls[0][1]).toEqual(['go', 'to_docs_json', '-i', 'spec.json', '--no-imports']);
+            expect(capturedArgs).toEqual(['go', 'to_docs_json', '-i', 'spec.json', '--no-imports']);
         });
 
         it('should pass --no-wrapping flag when noWrapping is true', async () => {
-            const mockExecFile: any = vi.mocked(execFile).mockImplementation((...args: any[]) => {
-                const callback = args[args.length - 1];
-                callback(null, { stdout: 'success', stderr: '' });
-                return {} as any;
+            let capturedArgs: readonly string[] = [];
+            mockExecFileWith((_cmd, cmdArgs, cb) => {
+                capturedArgs = cmdArgs;
+                cb(null, { stdout: 'success', stderr: '' });
             });
 
             await runCddCtl('rust', 'spec.json', { noWrapping: true });
-            expect(mockExecFile.mock.calls[0][1]).toEqual(['rust', 'to_docs_json', '-i', 'spec.json', '--no-wrapping']);
+            expect(capturedArgs).toEqual(['rust', 'to_docs_json', '-i', 'spec.json', '--no-wrapping']);
         });
 
         it('should pass both flags when both options are true', async () => {
-            const mockExecFile: any = vi.mocked(execFile).mockImplementation((...args: any[]) => {
-                const callback = args[args.length - 1];
-                callback(null, { stdout: 'success', stderr: '' });
-                return {} as any;
+            let capturedArgs: readonly string[] = [];
+            mockExecFileWith((_cmd, cmdArgs, cb) => {
+                capturedArgs = cmdArgs;
+                cb(null, { stdout: 'success', stderr: '' });
             });
 
             await runCddCtl('java', 'spec.json', { noImports: true, noWrapping: true });
-            expect(mockExecFile.mock.calls[0][1]).toEqual([
-                'java',
-                'to_docs_json',
-                '-i',
-                'spec.json',
-                '--no-imports',
-                '--no-wrapping',
-            ]);
+            expect(capturedArgs).toEqual(['java', 'to_docs_json', '-i', 'spec.json', '--no-imports', '--no-wrapping']);
         });
 
         it('should reject if execFile fails', async () => {
             const mockError = new Error('Command failed');
-            vi.mocked(execFile).mockImplementation((...args: any[]) => {
-                const callback = args[args.length - 1];
-                callback(mockError);
-                return {} as any;
+            mockExecFileWith((_cmd, _cmdArgs, cb) => {
+                cb(mockError);
             });
 
             await expect(runCddCtl('rust', 'spec.json')).rejects.toThrow('Command failed');
@@ -143,8 +177,8 @@ describe('runner.ts', () => {
                     '/users': { get: "console.log('users');" },
                 },
             });
-            const result: any = parseCDDOutput(json);
-            expect(result.endpoints['/users'].get).toBe("console.log('users');");
+            const result = parseCDDOutput(json);
+            expect(result.endpoints['/users']?.['get']).toBe("console.log('users');");
         });
 
         it('should throw error for invalid JSON', () => {
@@ -188,28 +222,33 @@ describe('runner.ts', () => {
         };
 
         it('should generate default variant mocks correctly', () => {
-            const mock: any = generateMockFallback('python', dummySpec);
-            expect(mock.endpoints['/test'].get).toBe('FAILED CLI COMMAND ./cdd-ctl python (variant: default)');
-            expect(mock.endpoints['/test'].post).toBe('FAILED CLI COMMAND ./cdd-ctl python (variant: default)');
+            const mock = generateMockFallback('python', dummySpec);
+            expect(mock.endpoints['/test']?.['get']).toBe('FAILED CLI COMMAND ./cdd-ctl python (variant: default)');
+            expect(mock.endpoints['/test']?.['post']).toBe('FAILED CLI COMMAND ./cdd-ctl python (variant: default)');
             expect(mock.endpoints['/empty']).toEqual({});
-            expect(mock.endpoints['/ref']).toBeUndefined(); // references skipped
+            expect(mock.endpoints['/ref']).toBeUndefined();
         });
 
         it('should generate variant mocks reflecting options', () => {
-            const mock1: any = generateMockFallback('go', dummySpec, { noImports: true });
-            expect(mock1.endpoints['/test'].get).toContain('(variant: noImports)');
+            const mock1 = generateMockFallback('go', dummySpec, { noImports: true });
+            expect(mock1.endpoints['/test']?.['get']).toContain('(variant: noImports)');
 
-            const mock2: any = generateMockFallback('java', dummySpec, { noWrapping: true });
-            expect(mock2.endpoints['/test'].get).toContain('(variant: noWrapping)');
+            const mock2 = generateMockFallback('java', dummySpec, { noWrapping: true });
+            expect(mock2.endpoints['/test']?.['get']).toContain('(variant: noWrapping)');
 
-            const mock3: any = generateMockFallback('rust', dummySpec, { noImports: true, noWrapping: true });
-            expect(mock3.endpoints['/test'].get).toContain('(variant: noImportsNoWrapping)');
+            const mock3 = generateMockFallback('rust', dummySpec, {
+                noImports: true,
+                noWrapping: true,
+            });
+            expect(mock3.endpoints['/test']?.['get']).toContain('(variant: noImportsNoWrapping)');
         });
 
         it('should return empty endpoints if spec has no paths', () => {
-            const emptySpec = { ...dummySpec };
-            delete emptySpec.paths;
-            const mock: any = generateMockFallback('ts', emptySpec);
+            const emptySpec: OpenAPI320 = {
+                openapi: '3.2.0',
+                info: { title: 'Test', version: '1.0.0' },
+            };
+            const mock = generateMockFallback('ts', emptySpec);
             expect(mock.endpoints).toEqual({});
         });
     });
@@ -219,40 +258,40 @@ describe('runner.ts', () => {
 
         it('should return parsed CDDOutput on success', async () => {
             const validOutput = { endpoints: { '/api': { get: 'success code' } } };
-            vi.mocked(execFile).mockImplementation((...args: any[]) => {
-                const callback = args[args.length - 1];
-                callback(null, { stdout: JSON.stringify(validOutput), stderr: '' });
-                return {} as any;
+            mockExecFileWith((_cmd, _cmdArgs, cb) => {
+                cb(null, { stdout: JSON.stringify(validOutput), stderr: '' });
             });
 
-            const result: any = await generateVariant('c', 'spec.json', dummySpec);
+            const result = await generateVariant('c', 'spec.json', dummySpec);
             expect(result).toEqual(validOutput);
         });
 
         it('should catch errors and return mock fallback on exec failure', async () => {
-            vi.mocked(execFile).mockImplementation((...args: any[]) => {
-                const callback = args[args.length - 1];
-                callback(new Error('Subprocess crashed'));
-                return {} as any;
+            mockExecFileWith((_cmd, _cmdArgs, cb) => {
+                cb(new Error('Subprocess crashed'));
             });
 
-            const specWithPaths: OpenAPI320 = { ...dummySpec, paths: { '/path': { get: { responses: {} } } } };
-            const result: any = await generateVariant('ruby', 'spec.json', specWithPaths);
+            const specWithPaths: OpenAPI320 = {
+                ...dummySpec,
+                paths: { '/path': { get: { responses: {} } } },
+            };
+            const result = await generateVariant('ruby', 'spec.json', specWithPaths);
 
-            expect(result.endpoints['/path'].get).toBe('FAILED CLI COMMAND ./cdd-ctl ruby (variant: default)');
+            expect(result.endpoints['/path']?.['get']).toBe('FAILED CLI COMMAND ./cdd-ctl ruby (variant: default)');
         });
 
         it('should catch errors and return mock fallback on parse failure', async () => {
-            vi.mocked(execFile).mockImplementation((...args: any[]) => {
-                const callback = args[args.length - 1];
-                callback(null, { stdout: 'invalid json', stderr: '' });
-                return {} as any;
+            mockExecFileWith((_cmd, _cmdArgs, cb) => {
+                cb(null, { stdout: 'invalid json', stderr: '' });
             });
 
-            const specWithPaths: OpenAPI320 = { ...dummySpec, paths: { '/path': { get: { responses: {} } } } };
-            const result: any = await generateVariant('php', 'spec.json', specWithPaths);
+            const specWithPaths: OpenAPI320 = {
+                ...dummySpec,
+                paths: { '/path': { get: { responses: {} } } },
+            };
+            const result = await generateVariant('php', 'spec.json', specWithPaths);
 
-            expect(result.endpoints['/path'].get).toBe('FAILED CLI COMMAND ./cdd-ctl php (variant: default)');
+            expect(result.endpoints['/path']?.['get']).toBe('FAILED CLI COMMAND ./cdd-ctl php (variant: default)');
         });
     });
 
@@ -261,20 +300,16 @@ describe('runner.ts', () => {
 
         it('should generate 4 variants for each language provided', async () => {
             const validOutput = { endpoints: { '/api': { get: 'code' } } };
-            const mockExecFile: any = vi.mocked(execFile).mockImplementation((...args: any[]) => {
-                const callback = args[args.length - 1];
-                callback(null, { stdout: JSON.stringify(validOutput), stderr: '' });
-                return {} as any;
+            const mockExec = mockExecFileWith((_cmd, _cmdArgs, cb) => {
+                cb(null, { stdout: JSON.stringify(validOutput), stderr: '' });
             });
 
             const langs = ['go', 'python-all'];
             const results = await generateAllSnippets(langs, 'spec.json', dummySpec);
 
-            // 2 langs * 4 variants * 1 method = 8 CodeExamples
             expect(results.length).toBe(8);
-            expect(mockExecFile).toHaveBeenCalledTimes(8);
+            expect(mockExec).toHaveBeenCalledTimes(8);
 
-            // Verify mapping
             expect(results).toContainEqual({
                 language: 'go',
                 filepath: '_api_get',
@@ -283,12 +318,140 @@ describe('runner.ts', () => {
                 includeWrapping: true,
             });
 
-            // Verify python-all mapped to python
             expect(results).toContainEqual(
                 expect.objectContaining({
                     language: 'python',
                 }),
             );
+        });
+
+        it('should parse array operations format, structured code objects, webhooks, and workflows', async () => {
+            const arrayOutput = JSON.stringify([
+                'not-a-record',
+                {
+                    language: 'go',
+                    operations: [
+                        'not-an-op',
+                        {
+                            method: 'GET',
+                            path: '/pets',
+                            code: {
+                                imports: 'import "fmt"',
+                                wrapperStart: 'func main() {',
+                                snippet: 'fmt.Println("hi")',
+                                wrapperEnd: '}',
+                            },
+                        },
+                        {
+                            method: 'POST',
+                            path: '/pets',
+                            code: 'raw-post-code',
+                        },
+                        {
+                            code: 12345,
+                        },
+                        {
+                            method: 'WORKFLOW',
+                            path: '/workflows/adoptWf',
+                            operationId: 'adoptWf',
+                            code: {
+                                default: {
+                                    imports: 'use pkg;',
+                                    wrapper_start: 'fn run() {',
+                                    code: 'step1();',
+                                    wrapper_end: '}',
+                                },
+                            },
+                        },
+                        {
+                            method: 'WORKFLOW',
+                            path: '/workflows/pathWf',
+                            code: 'path-wf-code',
+                        },
+                        {
+                            method: 'WORKFLOW',
+                            path: '',
+                            code: 'fallback-wf-code',
+                        },
+                    ],
+                },
+            ]);
+            const parsedArray = parseCDDOutput(arrayOutput);
+            expect(parsedArray.endpoints['/pets']?.['get']).toContain('fmt.Println("hi")');
+            expect(parsedArray.endpoints['/pets']?.['post']).toBe('raw-post-code');
+            expect(parsedArray.workflows?.['adoptWf']).toContain('step1();');
+            expect(parsedArray.workflows?.['pathWf']).toBe('path-wf-code');
+            expect(parsedArray.workflows?.['workflow']).toBe('fallback-wf-code');
+
+            expect(() => parseCDDOutput(JSON.stringify([{ invalidBlock: true }]))).toThrow(
+                'Invalid CDDOutput structure: missing endpoints object',
+            );
+            expect(
+                parseCDDOutput(JSON.stringify([{ operations: [{ method: 'GET', path: '/only', code: 'c' }] }]))
+                    .workflows,
+            ).toBeUndefined();
+
+            // Structured object with endpoints (structured snippet), webhooks, and workflows
+            const structuredObjOutput = JSON.stringify({
+                endpoints: {
+                    '/items': {
+                        get: { snippet: 'itemsGet()' },
+                    },
+                },
+                webhooks: {
+                    orderHook: {
+                        post: 'whPost()',
+                        put: { snippet: 'whPut()' },
+                        bad: 123,
+                    },
+                    badWh: 'not-record',
+                },
+                workflows: {
+                    wf1: 'wf1Run()',
+                    wf2: { snippet: 'wf2Run()' },
+                    badWf: 123,
+                },
+            });
+            const parsedObj = parseCDDOutput(structuredObjOutput);
+            expect(parsedObj.endpoints['/items']?.['get']).toBe('itemsGet()');
+            expect(parsedObj.webhooks?.['orderHook']?.['post']).toBe('whPost()');
+            expect(parsedObj.webhooks?.['orderHook']?.['put']).toBe('whPut()');
+            expect(parsedObj.workflows?.['wf1']).toBe('wf1Run()');
+            expect(parsedObj.workflows?.['wf2']).toBe('wf2Run()');
+
+            const workflowsOnlyObj = parseCDDOutput(JSON.stringify({ workflows: { onlyWf: 'onlyWfCode()' } }));
+            expect(workflowsOnlyObj.endpoints).toEqual({});
+            expect(workflowsOnlyObj.workflows?.['onlyWf']).toBe('onlyWfCode()');
+
+            // Mock fallback & generateAllSnippets with webhooks and Arazzo workflows
+            const specWithWebhooks: OpenAPI320 = {
+                openapi: '3.2.0',
+                info: { title: 'WH', version: '1.0.0' },
+                paths: { '/p': { get: { responses: {} } } },
+                webhooks: {
+                    hookA: { post: { responses: {} } },
+                    hookRef: { $ref: '#/components/pathItems/Ref' },
+                },
+            };
+            const arazzoSpec = {
+                arazzo: '1.1.0',
+                info: { title: 'Arazzo', version: '1.0.0' },
+                sourceDescriptions: [],
+                workflows: [{ workflowId: 'checkoutWf', steps: [{ stepId: 's1' }] }],
+            };
+
+            mockExecFileWith((_cmd, _args, cb) => {
+                cb(new Error('Command failed'));
+            });
+            const allSnippets = await generateAllSnippets(
+                ['ts'],
+                'spec.json',
+                specWithWebhooks,
+                './cdd-ctl',
+                arazzoSpec,
+            );
+            expect(allSnippets.some(s => s.filepath === 'hookA_post')).toBe(true);
+            expect(allSnippets.some(s => s.filepath === 'workflow_checkoutWf')).toBe(true);
         });
     });
 });

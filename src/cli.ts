@@ -1,24 +1,38 @@
 #!/usr/bin/env node
+/**
+ * Command-Line Interface and Live-Reload Watch Server for `cdd-docs-ui`.
+ * @module cli
+ */
+
 import fs from 'fs';
+import os from 'os';
 import { resolve } from 'path';
+import { fileURLToPath } from 'url';
+import express from 'express';
 import { generateAOTHtml } from './aot-generator';
 import { generateAllSnippets } from './runner';
 import { normalizeSpec } from './parser';
-import express from 'express';
+import { CliConfig } from './types';
+
+/**
+ * Current CLI version matching `package.json`.
+ */
+export const CLI_VERSION = '0.0.4';
 
 /**
  * Runs the CLI application using the provided command-line arguments.
- * @param args The array of command line arguments (typically process.argv.slice(2)).
+ * @param args The array of command line arguments (typically `process.argv.slice(2)`).
+ * @returns A promise that resolves when execution completes.
  */
-export async function run(args: string[]) {
+export async function run(args: string[]): Promise<void> {
     const config = parseArgs(args);
     if (config.version) {
-        console.log('0.0.1');
+        console.log(CLI_VERSION);
         process.exit(0);
     }
     if (!config.inputSpec) {
         console.error(
-            'Usage: cdd-docs-cli -i <path-to-openapi.yaml> [-o <output-dir>] [-t <theme>] [-w|--watch] [-p|--port <port>]',
+            'Usage: cdd-docs-cli -i <path-to-openapi-or-arazzo.yaml> [-a|--arazzo <path-to-arazzo.yaml>] [-o <output-dir>] [-t <theme>] [-w|--watch] [-p|--port <port>]',
         );
         process.exit(1);
     }
@@ -30,25 +44,13 @@ export async function run(args: string[]) {
 }
 
 /**
- * Parses the CLI arguments into a configuration object.
+ * Parses the CLI arguments into a strongly-typed `CliConfig` object.
  * @param args The command line arguments to parse.
- * @returns An object containing the parsed configuration options.
+ * @returns A `CliConfig` object containing the parsed configuration options.
  */
-export function parseArgs(args: string[]): {
-    /** The input OpenAPI specification path or URL. */
-    inputSpec: string;
-    /** The output directory path. */
-    outputDir: string;
-    /** The visual theme (light or dark). */
-    theme: 'light' | 'dark';
-    /** Whether to enable watch mode with a live-reload server. */
-    watchMode: boolean;
-    /** The port for the live-reload server. */
-    port: number;
-    /** Whether the version flag was passed. */
-    version: boolean;
-} {
+export function parseArgs(args: string[]): CliConfig {
     let inputSpec = '';
+    let arazzoSpec: string | undefined;
     let outputDir = './dist';
     let theme: 'light' | 'dark' = 'light';
     let watchMode = false;
@@ -56,24 +58,35 @@ export function parseArgs(args: string[]): {
     let version = false;
 
     for (let i = 0; i < args.length; i++) {
-        if (args[i] === '-v' || args[i] === '--version') {
+        const arg = args[i];
+        if (arg === '-v' || arg === '--version') {
             version = true;
-        } else if (args[i] === '-i' || args[i] === '--input') {
+        } else if (arg === '-i' || arg === '--input') {
             inputSpec = args[++i] || '';
-        } else if (args[i] === '-o' || args[i] === '--output') {
+        } else if (arg === '-a' || arg === '--arazzo') {
+            arazzoSpec = args[++i] || undefined;
+        } else if (arg === '-o' || arg === '--output') {
             outputDir = args[++i] || '';
-        } else if (args[i] === '-t' || args[i] === '--theme') {
-            theme = (args[++i] as 'light' | 'dark') || 'light';
-        } else if (args[i] === '-w' || args[i] === '--watch') {
+        } else if (arg === '-t' || arg === '--theme') {
+            const themeArg = args[++i];
+            theme = themeArg === 'dark' ? 'dark' : 'light';
+        } else if (arg === '-w' || arg === '--watch') {
             watchMode = true;
-        } else if (args[i] === '-p' || args[i] === '--port') {
+        } else if (arg === '-p' || arg === '--port') {
             const portStr = args[++i];
             if (portStr) {
-                port = parseInt(portStr, 10);
+                const parsedPort = parseInt(portStr, 10);
+                if (!Number.isNaN(parsedPort) && parsedPort > 0) {
+                    port = parsedPort;
+                }
             }
         }
     }
-    return { inputSpec, outputDir, theme, watchMode, port, version };
+    const config: CliConfig = { inputSpec, outputDir, theme, watchMode, port, version };
+    if (arazzoSpec !== undefined) {
+        config.arazzoSpec = arazzoSpec;
+    }
+    return config;
 }
 
 /**
@@ -81,40 +94,90 @@ export function parseArgs(args: string[]): {
  * @param config The parsed CLI configuration object.
  * @returns A boolean indicating whether generation was successful.
  */
-export async function generate(config: ReturnType<typeof parseArgs>) {
-    const { inputSpec, outputDir, theme, watchMode } = config;
+export async function generate(config: CliConfig): Promise<boolean> {
+    const { inputSpec, arazzoSpec, outputDir, theme, watchMode } = config;
     const specPath = resolve(process.cwd(), inputSpec);
     const outPath = resolve(process.cwd(), outputDir);
     const outHtmlPath = resolve(outPath, 'index.html');
+    let tempSpecPath: string | null = null;
+    let tempArazzoPath: string | null = null;
 
     try {
         let specContent = '';
         let effectiveSpecPath = specPath;
 
+        const nl = String.fromCharCode(10);
         const isUrl =
             /^https?:\/\//i.test(inputSpec) ||
-            (!inputSpec.includes('\n') && inputSpec.includes('/') && !fs.existsSync(resolve(process.cwd(), inputSpec)));
+            (!inputSpec.includes(nl) && inputSpec.includes('/') && !fs.existsSync(resolve(process.cwd(), inputSpec)));
 
         if (isUrl) {
             let url = inputSpec;
             if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
             console.log(`Fetching OpenAPI spec from ${url}...`);
             const res = await fetch(url);
-            if (!res.ok) throw new Error(`Failed to fetch spec from URL: ${res.status} ${res.statusText}`);
+            if (!res.ok) {
+                throw new Error(`Failed to fetch spec from URL: ${res.status} ${res.statusText}`);
+            }
             specContent = await res.text();
-            effectiveSpecPath = resolve(process.cwd(), '.temp-spec.yaml');
+            tempSpecPath = resolve(os.tmpdir(), '.temp-spec.yaml');
+            effectiveSpecPath = tempSpecPath;
             fs.writeFileSync(effectiveSpecPath, specContent);
         } else {
             specContent = fs.readFileSync(specPath, 'utf-8');
         }
 
-        const parsedData = normalizeSpec(specContent);
+        let companionArazzoContent: string | undefined;
+        let effectiveArazzoPath: string | undefined;
+        if (arazzoSpec) {
+            const arazzoLocalPath = resolve(process.cwd(), arazzoSpec);
+            const isArazzoUrl =
+                /^https?:\/\//i.test(arazzoSpec) ||
+                (!arazzoSpec.includes(nl) && arazzoSpec.includes('/') && !fs.existsSync(arazzoLocalPath));
+
+            if (isArazzoUrl) {
+                let arazzoUrl = arazzoSpec;
+                if (!/^https?:\/\//i.test(arazzoUrl)) arazzoUrl = 'https://' + arazzoUrl;
+                const arazzoRes = await fetch(arazzoUrl);
+                if (!arazzoRes.ok) {
+                    throw new Error(
+                        `Failed to fetch Arazzo spec from URL: ${arazzoRes.status} ${arazzoRes.statusText}`,
+                    );
+                }
+                companionArazzoContent = await arazzoRes.text();
+                tempArazzoPath = resolve(os.tmpdir(), '.temp-arazzo.yaml');
+                effectiveArazzoPath = tempArazzoPath;
+                fs.writeFileSync(effectiveArazzoPath, companionArazzoContent);
+            } else {
+                companionArazzoContent = fs.readFileSync(arazzoLocalPath, 'utf-8');
+                effectiveArazzoPath = arazzoLocalPath;
+            }
+        }
+
+        const parsedData = normalizeSpec(specContent, companionArazzoContent);
 
         console.log('Generating documentation snippets via cdd-ctl...');
-        const examples = await generateAllSnippets(undefined, effectiveSpecPath, parsedData.spec);
+        const examples = await generateAllSnippets(
+            undefined,
+            effectiveSpecPath,
+            parsedData.spec,
+            undefined,
+            parsedData.arazzoSpec,
+        );
+
+        if (effectiveArazzoPath && parsedData.arazzoSpec) {
+            const arazzoExamples = await generateAllSnippets(
+                undefined,
+                effectiveArazzoPath,
+                parsedData.spec,
+                undefined,
+                parsedData.arazzoSpec,
+            );
+            examples.push(...arazzoExamples);
+        }
 
         console.log('Compiling static HTML...');
-        const html = generateAOTHtml(specContent, examples, theme, watchMode);
+        const html = generateAOTHtml(specContent, examples, theme, watchMode, {}, companionArazzoContent);
 
         if (!fs.existsSync(outPath)) {
             fs.mkdirSync(outPath, { recursive: true });
@@ -126,16 +189,23 @@ export async function generate(config: ReturnType<typeof parseArgs>) {
     } catch (err) {
         console.error('Failed to generate documentation:', err);
         return false;
+    } finally {
+        if (tempSpecPath && typeof fs.unlinkSync === 'function' && fs.existsSync(tempSpecPath)) {
+            fs.unlinkSync(tempSpecPath);
+        }
+        if (tempArazzoPath && typeof fs.unlinkSync === 'function' && fs.existsSync(tempArazzoPath)) {
+            fs.unlinkSync(tempArazzoPath);
+        }
     }
 }
 
 /**
  * Starts a watch server to regenerate the API docs and notify connected clients on changes.
  * @param config The parsed CLI configuration object.
- * @returns The active Express server instance.
+ * @returns The active HTTP server instance.
  */
-export async function startWatchServer(config: ReturnType<typeof parseArgs>) {
-    const { inputSpec, outputDir, port } = config;
+export async function startWatchServer(config: CliConfig): Promise<ReturnType<express.Application['listen']>> {
+    const { inputSpec, arazzoSpec, outputDir, port } = config;
     const specPath = resolve(process.cwd(), inputSpec);
     const outPath = resolve(process.cwd(), outputDir);
     const app = express();
@@ -171,31 +241,65 @@ export async function startWatchServer(config: ReturnType<typeof parseArgs>) {
     });
 
     let isGenerating = false;
-    if (fs.existsSync(specPath)) {
-        fs.watch(specPath, async eventType => {
+    const handleFileWatch =
+        (watchedLabel: string) =>
+        async (eventType: string): Promise<void> => {
             if (isGenerating) return;
             isGenerating = true;
-            console.log(`\nDetected ${eventType} on ${inputSpec}, regenerating...`);
+            console.log(`
+Detected ${eventType} on ${watchedLabel}, regenerating...`);
             const success = await generate(config);
             if (success) {
-                clients.forEach(client => client.write('data: reload\n\n'));
+                const nl = String.fromCharCode(10);
+                clients.forEach(client => client.write(`data: reload${nl}${nl}`));
             }
             setTimeout(() => {
                 isGenerating = false;
-            }, 500); // Debounce
-        });
+            }, 500);
+        };
+
+    if (fs.existsSync(specPath)) {
+        fs.watch(specPath, handleFileWatch(inputSpec));
     } else {
         console.log(
             `Cannot watch URL or non-existent local file: ${inputSpec}. Watch server is running but file changes won't be detected.`,
         );
     }
+
+    if (arazzoSpec) {
+        const arazzoLocalPath = resolve(process.cwd(), arazzoSpec);
+        if (fs.existsSync(arazzoLocalPath)) {
+            fs.watch(arazzoLocalPath, handleFileWatch(arazzoSpec));
+        }
+    }
+
     return server;
 }
 
-// Execute if run directly
-import { fileURLToPath } from 'url';
-const isMainModule = typeof process !== 'undefined' && process.argv && process.argv[1] === fileURLToPath(import.meta.url);
-/* istanbul ignore next */
-if (isMainModule) {
-    run(process.argv.slice(2));
+/**
+ * Checks whether the current module is being executed directly as the main CLI entry point.
+ * @param argv1 The `process.argv[1]` script path.
+ * @param metaUrl The `import.meta.url` of the module.
+ * @returns True if `argv1` matches the file path resolved from `metaUrl`.
+ */
+export function checkIsMainModule(argv1: string | undefined, metaUrl: string): boolean {
+    if (!argv1 || !metaUrl) return false;
+    try {
+        return argv1 === fileURLToPath(metaUrl);
+    } catch {
+        return false;
+    }
 }
+
+/**
+ * Bootstraps CLI execution if invoked directly as the main entry point.
+ * @param argv Process arguments array (defaults to `process.argv`).
+ * @param metaUrl Module URL (defaults to `import.meta.url`).
+ */
+export function bootstrapCli(argv: string[] = process.argv, metaUrl: string = import.meta.url): void {
+    if (checkIsMainModule(argv[1], metaUrl)) {
+        void run(argv.slice(2));
+    }
+}
+
+bootstrapCli();

@@ -1,0 +1,84 @@
+{
+    "arazzo": "1.1.0",
+    "$self": "https://api.example.com/arazzo.json",
+    "info": {
+        "title": "Petstore Checkout & Onboarding Workflows",
+        "summary": "Multi-step Arazzo 1.1.0 workflows for Petstore",
+        "description": "Demonstrates Arazzo 1.1.0 workflows, step dependencies, runtime expressions, and reusable components.",
+        "version": "1.0.0"
+    },
+    "sourceDescriptions": [
+        {
+            "name": "petstore",
+            "url": "./spec.json",
+            "type": "openapi"
+        }
+    ],
+    "workflows": [
+        {
+            "workflowId": "adoptPetWorkflow",
+            "summary": "List pets and adopt a selected pet",
+            "description": "Queries available pets and creates an adoption record.",
+            "inputs": {
+                "type": "object",
+                "required": ["tag"],
+                "properties": {
+                    "tag": {
+                        "type": "string",
+                        "description": "Filter tag for pets"
+                    }
+                }
+            },
+            "steps": [
+                {
+                    "stepId": "findPetsStep",
+                    "description": "List available pets matching tag",
+                    "operationId": "listPets",
+                    "parameters": [
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "value": 10
+                        }
+                    ],
+                    "successCriteria": [
+                        {
+                            "context": "$statusCode",
+                            "condition": "$statusCode == 200",
+                            "type": "simple"
+                        }
+                    ],
+                    "outputs": {
+                        "firstPetId": "$response.body#/0/id"
+                    }
+                },
+                {
+                    "stepId": "createAdoptionStep",
+                    "description": "Create adoption request for the selected pet",
+                    "operationId": "createPets",
+                    "dependsOn": ["findPetsStep"],
+                    "requestBody": {
+                        "contentType": "application/json",
+                        "payload": {
+                            "petId": "$steps.findPetsStep.outputs.firstPetId",
+                            "tag": "$inputs.tag"
+                        }
+                    },
+                    "successCriteria": [
+                        {
+                            "context": "$statusCode",
+                            "condition": "$statusCode == 201",
+                            "type": "simple"
+                        }
+                    ],
+                    "outputs": {
+                        "adoptedPetId": "$steps.findPetsStep.outputs.firstPetId"
+                    }
+                }
+            ],
+            "outputs": {
+                "petId": "$steps.createAdoptionStep.outputs.adoptedPetId"
+            }
+        }
+    ]
+}

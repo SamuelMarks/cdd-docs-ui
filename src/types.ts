@@ -1,9 +1,10 @@
-import { OpenAPI320 } from './openapi-types';
-
 /**
- * Internal Data Model for API Documentation
+ * Internal Data Model for API and Workflow Documentation
  * @module types
  */
+
+import { OpenAPI320 } from './openapi-types';
+import { Arazzo110, NormalizedWorkflow, SourceDescriptionObject } from './arazzo-types';
 
 /**
  * Represents an SDK code example.
@@ -16,16 +17,16 @@ export interface CodeExample {
     /** The actual code content. */
     content: string;
     /** Whether to include import statements in the displayed example. */
-    includeImports?: boolean;
+    includeImports?: boolean | undefined;
     /** Whether to include wrapping code (like function definitions) in the displayed example. */
-    includeWrapping?: boolean;
+    includeWrapping?: boolean | undefined;
 }
 
 /**
  * Expected JSON output structure from cdd-ctl
  */
 export interface CDDOutput {
-    /** 
+    /**
      * Map of endpoints where the key is the route path.
      * The value is a map of HTTP methods to generated code string snippets.
      */
@@ -34,12 +35,34 @@ export interface CDDOutput {
             [method: string]: string;
         };
     };
+    /**
+     * Optional map of webhooks where the key is the webhook name.
+     * The value is a map of HTTP methods to generated code string snippets.
+     */
+    webhooks?:
+        | {
+              [webhookName: string]: {
+                  [method: string]: string;
+              };
+          }
+        | undefined;
+    /**
+     * Optional map of Arazzo workflows where the key is the `workflowId`.
+     * The value is the generated workflow orchestrator code snippet.
+     */
+    workflows?:
+        | {
+              [workflowId: string]: string;
+          }
+        | undefined;
 }
 
 /**
  * The Final Normalized Documentation Data structure used by the UI.
  */
 export interface DocData {
+    /** Indicates whether the document is an OpenAPI spec, an Arazzo spec, or a combined OpenAPI + Arazzo view. */
+    specKind?: 'openapi' | 'arazzo' | 'combined' | undefined;
     /** The parsed and normalized OpenAPI specification. */
     spec: OpenAPI320;
     /**
@@ -48,9 +71,40 @@ export interface DocData {
      * Value: Array of CodeExample objects.
      */
     codeExamples: Record<string, CodeExample[]>;
+    /** Optional parsed and normalized Arazzo 1.1.0 specification. */
+    arazzoSpec?: Arazzo110 | undefined;
+    /** Normalized and enriched Arazzo workflows. */
+    workflows?: NormalizedWorkflow[] | undefined;
+    /** Source descriptions referenced by the Arazzo specification. */
+    sourceDescriptions?: SourceDescriptionObject[] | undefined;
+    /**
+     * A map of Arazzo `workflowId` strings to their corresponding SDK/CLI code examples.
+     */
+    workflowCodeExamples?: Record<string, CodeExample[]> | undefined;
+}
+
+/**
+ * Configuration options for the CLI runner and watch server.
+ */
+export interface CliConfig {
+    /** Whether to print the CLI version and exit. */
+    version: boolean;
+    /** Path or URL to the input OpenAPI or Arazzo specification. */
+    inputSpec: string;
+    /** Optional path or URL to a companion Arazzo 1.1.0 specification. */
+    arazzoSpec?: string | undefined;
+    /** Output directory for generated static HTML documentation. */
+    outputDir: string;
+    /** Initial theme ('light' or 'dark'). */
+    theme: 'light' | 'dark';
+    /** Whether to start the live-reload watch server. */
+    watchMode: boolean;
+    /** Port number for the watch server. */
+    port: number;
 }
 
 export * from './openapi-types';
+export * from './arazzo-types';
 
 /**
  * Interface defining all localizable strings for the CDD API Documentation UI.
@@ -122,6 +176,36 @@ export interface DocTranslations {
     tabCurl: string;
     /** Label for the SDK code tab */
     tabSdk: string;
+    /** Heading for the Arazzo workflows navigation and main section */
+    workflowsHeading: string;
+    /** Heading for Arazzo sourceDescriptions list */
+    sourceDescriptionsHeading: string;
+    /** Heading for Arazzo workflow inputs schema */
+    workflowInputsHeading: string;
+    /** Heading for Arazzo workflow outputs mapping */
+    workflowOutputsHeading: string;
+    /** Heading for Arazzo workflow dependsOn prerequisites */
+    workflowDependsOnHeading: string;
+    /** Heading for Arazzo workflow steps pipeline */
+    stepsHeading: string;
+    /** Heading for Arazzo step parameters table */
+    stepParametersHeading: string;
+    /** Heading for Arazzo step request body and replacements */
+    stepRequestBodyHeading: string;
+    /** Heading for Arazzo step successCriteria assertions */
+    successCriteriaHeading: string;
+    /** Heading for Arazzo step onSuccess actions */
+    onSuccessHeading: string;
+    /** Heading for Arazzo step onFailure actions */
+    onFailureHeading: string;
+    /** Heading for Arazzo step outputs table */
+    stepOutputsHeading: string;
+    /** Button text for executing an interactive Arazzo workflow */
+    runWorkflowBtn: string;
+    /** Heading for reusable Arazzo components section */
+    arazzoComponentsHeading: string;
+    /** Heading for OpenAPI 3.2.0 webhooks section */
+    webhooksHeading: string;
 }
 
 /** Default English translations for the UI */
@@ -159,4 +243,19 @@ export const defaultTranslations: DocTranslations = {
     tocNavLabel: 'Table of Contents',
     tabCurl: 'cURL',
     tabSdk: 'SDK',
+    workflowsHeading: 'Workflows',
+    sourceDescriptionsHeading: 'Source Descriptions',
+    workflowInputsHeading: 'Workflow Inputs',
+    workflowOutputsHeading: 'Workflow Outputs',
+    workflowDependsOnHeading: 'Prerequisites (dependsOn)',
+    stepsHeading: 'Workflow Steps',
+    stepParametersHeading: 'Step Parameters',
+    stepRequestBodyHeading: 'Step Request Body & Replacements',
+    successCriteriaHeading: 'Success Criteria',
+    onSuccessHeading: 'On Success Actions',
+    onFailureHeading: 'On Failure Actions',
+    stepOutputsHeading: 'Step Outputs',
+    runWorkflowBtn: 'Run Workflow',
+    arazzoComponentsHeading: 'Arazzo Components',
+    webhooksHeading: 'Webhooks',
 };

@@ -17,21 +17,21 @@ As `cdd-docs-ui` is responsible for generating comprehensive API documentation (
 
 #### 2. Target Generators (13 Supported Languages)
 
-Each of the 13 underlying `cdd-*` projects must fully implement the `to_docs_json` generation mode for their Client, Client CLI, and Server targets. All generators must support OpenAPI 3.2.0 (and legacy Swagger/Google Discovery where specified).
+Each of the 13 underlying `cdd-*` projects must fully implement the `to_docs_json` generation mode for their Client, Client CLI, and Server targets. All generators must support **OpenAPI 3.2.0**, **Swagger 2.0**, and **Arazzo 1.1.0** (as well as Google Discovery where specified).
 
-- [ ] **C (`cdd-c`) Target:** Implement JSON emission for C89 (including FFI support).
-- [ ] **C++ (`cdd-cpp`) Target:** Implement JSON emission. Ensure upstream upgrade support from Swagger 2.0 & Google Discovery to OpenAPI 3.2.0.
-- [ ] **C# (`cdd-csharp`) Target:** Implement JSON emission (including CLR support).
-- [ ] **Go (`cdd-go`) Target:** Implement JSON emission.
-- [ ] **Java (`cdd-java`) Target:** Implement JSON emission.
-- [ ] **Kotlin (`cdd-kotlin`) Target:** Implement JSON emission. Must cover `ktor` Multiplatform and Auto-Admin UI capabilities.
-- [ ] **PHP (`cdd-php`) Target:** Implement JSON emission.
-- [ ] **Python (`cdd-python-all`) Target:** Implement JSON emission.
-- [ ] **Ruby (`cdd-ruby`) Target:** Implement JSON emission.
-- [ ] **Rust (`cdd-rust`) Target:** Implement JSON emission.
-- [ ] **Shell (`cdd-sh`) Target:** Implement JSON emission for `/bin/sh`.
-- [ ] **Swift (`cdd-swift`) Target:** Implement JSON emission.
-- [ ] **TypeScript (`cdd-ts`) Target:** Implement JSON emission. Must cover Auto-Admin UI, Angular, fetch, Axios, and Node.js. Supports both OpenAPI 3.2.0 and Swagger 2.
+- [ ] **C (`cdd-c`) Target:** Implement JSON emission for C89 (including FFI and Arazzo 1.1.0 workflow orchestrator support).
+- [ ] **C++ (`cdd-cpp`) Target:** Implement JSON emission (OpenAPI 3.2.0, Swagger 2.0, and Arazzo 1.1.0 workflows).
+- [ ] **C# (`cdd-csharp`) Target:** Implement JSON emission (including CLR and Arazzo 1.1.0 workflow support).
+- [ ] **Go (`cdd-go`) Target:** Implement JSON emission (OpenAPI 3.2.0 and Arazzo 1.1.0 workflows).
+- [ ] **Java (`cdd-java`) Target:** Implement JSON emission (OpenAPI 3.2.0 and Arazzo 1.1.0 workflows).
+- [ ] **Kotlin (`cdd-kotlin`) Target:** Implement JSON emission (`ktor` Multiplatform, Auto-Admin UI, and Arazzo 1.1.0 workflows).
+- [ ] **PHP (`cdd-php`) Target:** Implement JSON emission (OpenAPI 3.2.0 and Arazzo 1.1.0 workflows).
+- [ ] **Python (`cdd-python-all`) Target:** Implement JSON emission (OpenAPI 3.2.0 and Arazzo 1.1.0 workflows).
+- [ ] **Ruby (`cdd-ruby`) Target:** Implement JSON emission (OpenAPI 3.2.0 and Arazzo 1.1.0 workflows).
+- [ ] **Rust (`cdd-rust`) Target:** Implement JSON emission (OpenAPI 3.2.0 and Arazzo 1.1.0 workflows).
+- [ ] **Shell (`cdd-sh`) Target:** Implement JSON emission for `/bin/sh` (OpenAPI 3.2.0 and Arazzo 1.1.0 workflows).
+- [ ] **Swift (`cdd-swift`) Target:** Implement JSON emission (OpenAPI 3.2.0 and Arazzo 1.1.0 workflows).
+- [ ] **TypeScript (`cdd-ts`) Target:** Implement JSON emission (Auto-Admin UI, Angular, React, Vue, fetch, Axios, Node.js, OpenAPI 3.2.0, Swagger 2.0, and Arazzo 1.1.0 workflows).
 
 #### 3. Variant Support & Modifiers
 

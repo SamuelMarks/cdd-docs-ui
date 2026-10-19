@@ -1,3 +1,9 @@
+/**
+ * Comprehensive OpenAPI 3.2.0 YAML fixture for exhaustive parser tests.
+ * @module test-yaml
+ */
+
+/** Complete OpenAPI 3.2.0 YAML fixture containing servers, paths, webhooks, components, and security schemes. */
 export const testYaml = `
 openapi: 3.2.0
 info:

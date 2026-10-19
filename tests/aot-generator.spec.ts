@@ -1,8 +1,35 @@
+/**
+ * Unit tests for AOT HTML and CSS documentation generator (`src/aot-generator.ts`).
+ * @module aot-generator.spec
+ */
 import { describe, it, expect } from 'vitest';
-import { generateAOTHtml, renderMarkdown } from '../src/aot-generator';
+import {
+    generateAOTHtml,
+    renderMarkdown,
+    escapeHtml,
+    generateCurl,
+    renderSchema,
+    renderArazzoValue,
+    formatCriterionType,
+    renderWorkflowSection,
+    renderArazzoComponents,
+} from '../src/aot-generator';
 import { CodeExample } from '../src/types';
 
+describe('escapeHtml', () => {
+    it('should escape HTML special characters safely', () => {
+        expect(escapeHtml(`<script>alert("xss" & 'bad')</script>`)).toBe(
+            '&lt;script&gt;alert(&quot;xss&quot; &amp; &#39;bad&#39;)&lt;/script&gt;',
+        );
+    });
+});
+
 describe('renderMarkdown', () => {
+    it('should render empty string when text is undefined or empty', () => {
+        expect(renderMarkdown(undefined)).toBe('');
+        expect(renderMarkdown('')).toBe('');
+    });
+
     it('should render basic markdown features', () => {
         expect(renderMarkdown('**bold**').trim()).toBe('<p><strong>bold</strong></p>');
         expect(renderMarkdown('__bold__').trim()).toBe('<p><strong>bold</strong></p>');
@@ -11,30 +38,72 @@ describe('renderMarkdown', () => {
         expect(renderMarkdown('[link](https://example.com)').trim()).toBe(
             '<p><a href="https://example.com">link</a></p>',
         );
-        expect(renderMarkdown('line1\n\nline2').trim()).toBe('<p>line1</p>\n<p>line2</p>');
-        expect(renderMarkdown('line1\nline2').trim()).toBe('<p>line1\nline2</p>');
+        const nl = String.fromCharCode(10);
+        expect(renderMarkdown(`line1${nl}${nl}line2`).trim()).toBe(`<p>line1</p>${nl}<p>line2</p>`);
+        expect(renderMarkdown(`line1${nl}line2`).trim()).toBe(`<p>line1${nl}line2</p>`);
     });
 
     it('should not break links when using italics', () => {
         const text = `[link](https://example.com) and some _italic_ text`;
-        expect(renderMarkdown(text).trim()).toBe('<p><a href="https://example.com">link</a> and some <em>italic</em> text</p>');
+        expect(renderMarkdown(text).trim()).toBe(
+            '<p><a href="https://example.com">link</a> and some <em>italic</em> text</p>',
+        );
     });
 
     it('should render unordered lists', () => {
-        const text = `- item 1\n- item 2`;
-        const expected = `<ul>\n<li>item 1</li>\n<li>item 2</li>\n</ul>`;
+        const text = `- item 1
+- item 2`;
+        const expected = `<ul>
+<li>item 1</li>
+<li>item 2</li>
+</ul>`;
         expect(renderMarkdown(text).trim()).toBe(expected);
     });
 
     it('should render ordered lists', () => {
-        const text = `1. item 1\n2. item 2`;
-        const expected = `<ol>\n<li>item 1</li>\n<li>item 2</li>\n</ol>`;
+        const text = `1. item 1
+2. item 2`;
+        const expected = `<ol>
+<li>item 1</li>
+<li>item 2</li>
+</ol>`;
         expect(renderMarkdown(text).trim()).toBe(expected);
     });
 });
 
+describe('generateCurl & renderSchema', () => {
+    it('should normalize baseUrl trailing slash and include custom server URL', () => {
+        const cmd = generateCurl('post', '/pets', {}, 'https://custom.api.org/');
+        expect(cmd).toBe('curl -X POST "https://custom.api.org/pets"');
+    });
+
+    it('should guard against excessive recursion depth in renderSchema', () => {
+        const out = renderSchema({ type: 'object' }, 11, 'deep');
+        expect(out).toBe('<span class="cdd-prop-type">object</span>');
+    });
+
+    it('should handle reference with empty trailing slash and reference property in object schema', () => {
+        const refOut = renderSchema({ $ref: '' });
+        expect(refOut).toContain('cdd-schema-ref');
+
+        const propWithoutPrefix = renderSchema({
+            type: 'object',
+            required: ['refProp'],
+            properties: {
+                refProp: { $ref: '#/components/schemas/SubModel', description: 'Ref desc' },
+                emptyRefProp: { $ref: '' },
+                arrProp: { type: 'array', items: { type: 'string' } },
+            },
+        });
+        expect(propWithoutPrefix).toContain('id="prop-refProp"');
+        expect(propWithoutPrefix).toContain('SubModel');
+        expect(propWithoutPrefix).toContain('Ref desc');
+        expect(propWithoutPrefix).toContain('Array of:');
+    });
+});
+
 describe('aot-generator', () => {
-    it('should handle termsOfService and contact info in header', () => {
+    it('should handle termsOfService and contact info in header across all contact variants', () => {
         const yamlStr = `
 openapi: 3.0.0
 info:
@@ -51,7 +120,20 @@ paths: {}
         expect(html).toContain('<a href="https://example.com/terms" target="_blank">Terms of Service</a>');
         expect(html).toContain('Contact: <a href="https://example.com/support" target="_blank">API Support</a>');
 
-        // Test email only fallback
+        const yamlUrlNoName = `
+openapi: 3.0.0
+info:
+  title: Full Info API
+  version: 1.0.0
+  contact:
+    url: https://example.com/support
+paths: {}
+`;
+        const htmlUrlNoName = generateAOTHtml(yamlUrlNoName);
+        expect(htmlUrlNoName).toContain(
+            'Contact: <a href="https://example.com/support" target="_blank">API Support</a>',
+        );
+
         const yamlEmailOnly = `
 openapi: 3.0.0
 info:
@@ -63,8 +145,20 @@ paths: {}
 `;
         const html2 = generateAOTHtml(yamlEmailOnly);
         expect(html2).toContain('Contact: <a href="mailto:just@email.com">just@email.com</a>');
-        
-        // Test name only fallback
+
+        const yamlEmailAndName = `
+openapi: 3.0.0
+info:
+  title: Full Info API
+  version: 1.0.0
+  contact:
+    name: NamedEmail
+    email: named@email.com
+paths: {}
+`;
+        const htmlEmailNamed = generateAOTHtml(yamlEmailAndName);
+        expect(htmlEmailNamed).toContain('Contact: <a href="mailto:named@email.com">NamedEmail</a>');
+
         const yamlNameOnly = `
 openapi: 3.0.0
 info:
@@ -76,6 +170,17 @@ paths: {}
 `;
         const html3 = generateAOTHtml(yamlNameOnly);
         expect(html3).toContain('Contact: OnlyName');
+
+        const yamlEmptyContact = `
+openapi: 3.0.0
+info:
+  title: Full Info API
+  version: 1.0.0
+  contact: {}
+paths: {}
+`;
+        const htmlEmptyContact = generateAOTHtml(yamlEmptyContact);
+        expect(htmlEmptyContact).toContain('Contact: API Support');
     });
 
     it('should generate HTML correctly from valid spec and examples', () => {
@@ -84,11 +189,14 @@ openapi: 3.0.0
 info:
   title: Test API
   version: 1.0.1
+servers:
+  - url: https://api.test.io
 paths:
   /users:
     get:
       operationId: getUsers
       summary: Get users
+      description: Retrieve all users
       parameters:
         - name: limit
           in: query
@@ -107,11 +215,83 @@ paths:
         expect(html).toContain('<!DOCTYPE html>');
         expect(html).toContain('Test API');
         expect(html).toContain('Get users');
+        expect(html).toContain('Retrieve all users');
+        expect(html).toContain('https://api.test.io/users');
         expect(html).toContain('fn get_users() {}');
         expect(html).toContain('cURL');
         expect(html).toContain('SDK');
         expect(html).toContain('cdd-layout');
-        expect(html).toContain('--cdd-primary: #005ac1'); // Light theme primary
+        expect(html).toContain('cdd-badge-get cdd-badge-GET');
+        expect(html).toContain('--cdd-primary: #005ac1');
+    });
+
+    it('should support custom translations across all UI elements', () => {
+        const yamlStr = `
+openapi: 3.0.0
+info:
+  title: Translated API
+  version: 1.0.0
+  termsOfService: https://example.com/tos
+paths:
+  /items:
+    get:
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+components:
+  schemas:
+    Item:
+      type: object
+      properties:
+        id:
+          type: string
+`;
+        const html = generateAOTHtml(yamlStr, [], 'light', false, {
+            locale: 'fr',
+            tableHeaderProperty: 'Propriete',
+            tableHeaderName: 'Nom',
+            tabCurl: 'Requete cURL',
+            tabSdk: 'Code SDK',
+            termsOfService: 'Conditions',
+            appearanceHeading: 'Apparence',
+            tocNavLabel: 'Sommaire',
+        });
+        expect(html).toContain('<html lang="fr"');
+        expect(html).toContain('<th>Propriete</th>');
+        expect(html).toContain('<th>Nom</th>');
+        expect(html).toContain('Requete cURL');
+        expect(html).toContain('Code SDK');
+        expect(html).toContain('Conditions');
+        expect(html).toContain('Apparence');
+        expect(html).toContain('aria-label="Sommaire"');
+    });
+
+    it('should escape XSS payloads in code examples, titles, and summaries', () => {
+        const yamlStr = `
+openapi: 3.0.0
+info:
+  title: <script>alert(1)</script>
+  version: 1.0.0
+paths:
+  /xss:
+    get:
+      operationId: getXss
+      summary: <img src=x onerror=alert(1)>
+`;
+        const examples: CodeExample[] = [
+            {
+                language: 'javascript',
+                filepath: 'getXss.js',
+                content: 'const x = "<script>evil()</script>";',
+            },
+        ];
+        const html = generateAOTHtml(yamlStr, examples);
+        expect(html).not.toContain('<script>alert(1)</script>');
+        expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+        expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+        expect(html).toContain('&lt;script&gt;evil()&lt;/script&gt;');
     });
 
     it('should handle dark theme', () => {
@@ -122,7 +302,8 @@ info:
   version: 1.0.0
 `;
         const html = generateAOTHtml(yamlStr, [], 'dark');
-        expect(html).toContain('--cdd-primary: #adc6ff'); // Dark theme primary
+        expect(html).toContain('--cdd-primary: #adc6ff');
+        expect(html).toContain('id="opt-dark-mode" class="cdd-visually-hidden" checked');
     });
 
     it('should render schemas correctly', () => {
@@ -135,17 +316,21 @@ components:
   schemas:
     User:
       type: object
+      required:
+        - id
       properties:
         id:
           type: integer
         name:
           type: string
+        untypedProp: {}
 `;
         const html = generateAOTHtml(yamlStr);
         expect(html).toContain('User');
         expect(html).toContain('cdd-schema-table');
-        expect(html).toContain('id');
+        expect(html).toContain('id<span class="cdd-required">*</span>');
         expect(html).toContain('name');
+        expect(html).toContain('untypedProp');
     });
 
     it('should handle references in schemas', () => {
@@ -198,10 +383,9 @@ paths:
           description: OK
 `;
         const html = generateAOTHtml(yamlStr);
-        expect(html).toContain('-H "X-Header: <value>"');
-        expect(html).toContain('-H "Content-Type: application/json"');
-        expect(html).toContain('-d \'{"key": "value"}\'');
-        // Try It Out form checks
+        expect(html).toContain('-H &quot;X-Header: &lt;value&gt;&quot;');
+        expect(html).toContain('-H &quot;Content-Type: application/json&quot;');
+        expect(html).toContain('-d &#39;{&quot;key&quot;: &quot;value&quot;}&#39;');
         expect(html).toContain('cdd-try-form');
         expect(html).toContain('method="POST"');
         expect(html).toContain('data-in="path"');
@@ -341,12 +525,12 @@ paths:
 `;
         const html = generateAOTHtml(yamlStr);
         expect(html).toContain('/empty-body');
-        expect(html).not.toContain('-H "Content-Type:');
+        expect(html).not.toContain('-H &quot;Content-Type:');
     });
 });
 
 describe('aot-generator-code-variants', () => {
-    it('should handle code variants with imports and wrapping', () => {
+    it('should handle all 4 combinations of includeImports and includeWrapping', () => {
         const yamlStr = `
 openapi: 3.0.0
 info:
@@ -361,9 +545,18 @@ paths:
             {
                 language: 'ts',
                 filepath: 'test.ts',
-                content: 'import sdk\nsdk.test()',
+                content: `import sdk
+sdk.test()`,
                 includeImports: true,
                 includeWrapping: false,
+            },
+            {
+                language: 'ts',
+                filepath: 'test.ts',
+                content: `import sdk
+function run() { sdk.test() }`,
+                includeImports: true,
+                includeWrapping: true,
             },
             {
                 language: 'sh',
@@ -372,13 +565,23 @@ paths:
                 includeImports: false,
                 includeWrapping: false,
             },
+            {
+                language: 'python',
+                filepath: 'test.py',
+                content: 'def run(): pass',
+                includeImports: false,
+                includeWrapping: true,
+            },
         ];
 
         const html = generateAOTHtml(yamlStr, sdkExamples);
         expect(html).toContain('language-typescript');
         expect(html).toContain('language-bash');
-        expect(html).toContain('cdd-show-if-imports');
-        expect(html).toContain('cdd-hide-if-imports');
+        expect(html).toContain('language-python');
+        expect(html).toContain('cdd-show-if-imports cdd-hide-if-wrapping');
+        expect(html).toContain('cdd-show-if-imports cdd-show-if-wrapping');
+        expect(html).toContain('cdd-hide-if-imports cdd-hide-if-wrapping');
+        expect(html).toContain('cdd-hide-if-imports cdd-show-if-wrapping');
     });
 
     it('should handle parameters without schemas', () => {
@@ -396,10 +599,11 @@ paths:
           required: true
 `;
         const html = generateAOTHtml(yamlStr);
-        expect(html).toContain('p1');
+        expect(html).toContain('p1*');
+        expect(html).toContain('<td>any</td>');
     });
 
-    it('should fallback when no language examples are provided', () => {
+    it('should fallback when no language examples are provided or unmatched language exists', () => {
         const yamlStr = `
 openapi: 3.0.0
 info:
@@ -408,10 +612,15 @@ info:
 paths:
   /test:
     get:
-      operationId: test
+      operationId: op1
 `;
-        const html = generateAOTHtml(yamlStr, []);
-        expect(html).toContain('No example for javascript');
+        const htmlEmpty = generateAOTHtml(yamlStr, []);
+        expect(htmlEmpty).toContain('No example for javascript');
+
+        const htmlUnmatched = generateAOTHtml(yamlStr, [
+            { language: 'rust', filepath: 'other_op.rs', content: 'fn other() {}' },
+        ]);
+        expect(htmlUnmatched).toContain('No example for rust');
     });
 
     it('should handle empty object schema types', () => {
@@ -427,23 +636,6 @@ components:
 `;
         const html = generateAOTHtml(yamlStr);
         expect(html).toContain('EmptyType');
-    });
-
-    it('should handle request parameter headers that are not references', () => {
-        const yamlStr = `
-openapi: 3.0.0
-info:
-  title: Header Param API
-  version: 1.0.0
-paths:
-  /test:
-    get:
-      parameters:
-        - name: X-Test
-          in: header
-`;
-        const html = generateAOTHtml(yamlStr);
-        expect(html).toContain('-H "X-Test: <value>"');
     });
 
     it('should handle full arrays and primitive schemas', () => {
@@ -492,8 +684,6 @@ components:
       description: test body
 `;
         const html = generateAOTHtml(yamlStr);
-        // Should skip rendering the inline form fields because we don't resolve refs deeply in AOT for try-it-out yet.
-        // At least it won't crash.
         expect(html).toContain('/test');
     });
 
@@ -510,377 +700,229 @@ info:
         const htmlWithout = generateAOTHtml(yamlStr, [], 'light', false);
         expect(htmlWithout).not.toContain('/__livereload');
     });
-});
 
+    it('should render Arazzo values, criterion types, Arazzo components, webhooks, and full workflow sections', () => {
+        expect(renderArazzoValue('plain-str')).toBe('<code>plain-str</code>');
+        expect(renderArazzoValue({ a: 1 })).toBe('<code>{&quot;a&quot;:1}</code>');
+        expect(renderArazzoValue({ context: '$response.body', selector: '/id' })).toContain('jsonpointer');
+        expect(
+            renderArazzoValue({
+                context: '$response.body',
+                selector: '$.id',
+                type: { type: 'jsonpath', version: 'RFC9535' },
+            }),
+        ).toContain('jsonpath (RFC9535)');
 
-it("should cover info missing cases", async () => { generateAOTHtml(`openapi: 3.2.0
+        expect(formatCriterionType({ condition: 'true' })).toBe('simple');
+        expect(formatCriterionType({ condition: 'true', type: 'regex' })).toBe('regex');
+        expect(
+            formatCriterionType({
+                condition: '$.a',
+                type: { type: 'jsonpath', version: 'RFC9535' },
+            }),
+        ).toBe('jsonpath (RFC9535)');
+
+        expect(renderArazzoComponents(undefined)).toBe('');
+        expect(renderArazzoComponents({})).toBe('');
+        const compHtml = renderArazzoComponents({
+            inputs: { UserIn: { type: 'object', properties: { name: { type: 'string' } } } },
+            parameters: {
+                Param1: { name: 'p1', in: 'header', value: 'v1' },
+                Param2: { name: 'p2', value: 'v2' },
+            },
+            successActions: { Sa1: { name: 'sa1', type: 'end' } },
+            failureActions: { Fa1: { name: 'fa1', type: 'retry' } },
+        });
+        expect(compHtml).toContain('$components.inputs.UserIn');
+        expect(compHtml).toContain('$components.parameters');
+        expect(compHtml).toContain('$components.successActions');
+        expect(compHtml).toContain('$components.failureActions');
+
+        const openApiYaml = `
+openapi: 3.2.0
 info:
-  title: a
-  contact:
-    url: u
-    email: e
+  title: Combined OpenAPI
+  version: 1.0.0
 paths:
-  /p:
+  /pets:
     get:
-      description: d
-      parameters:
-        - name: a
-          in: query
-          required: true
-          schema:
-            type: string
-`); });
+      operationId: listPets
+      responses:
+        '200':
+          description: ok
+webhooks:
+  petWebhook:
+    post:
+      operationId: onPetWebhook
+      summary: Pet Webhook Summary
+      description: Webhook description
+      responses:
+        '200':
+          description: ok
+    put:
+      responses:
+        '200':
+          description: ok
+  refWebhook:
+    $ref: '#/components/pathItems/Ref'
+`;
+        const arazzoJson = JSON.stringify({
+            arazzo: '1.1.0',
+            info: { title: 'Arazzo Workflows', version: '1.0.0' },
+            sourceDescriptions: [
+                { name: 'petstore', url: './openapi.yaml', type: 'openapi' },
+                { name: 'defaultTypeSd', url: './other.yaml' },
+            ],
+            components: {
+                inputs: { InSchema: { type: 'object' } },
+            },
+            workflows: [
+                {
+                    workflowId: 'wfMain',
+                    summary: 'Main Workflow',
+                    description: 'Workflow markdown',
+                    dependsOn: ['$sourceDescriptions.ext.workflows.prereqWf', 'localPrereq'],
+                    inputs: {
+                        type: 'object',
+                        properties: { userId: { type: 'string' } },
+                    },
+                    outputs: {
+                        finalOut: '$steps.s1.outputs.id',
+                    },
+                    steps: [
+                        {
+                            stepId: 's1',
+                            description: 'Step 1 desc',
+                            operationId: 'listPets',
+                            timeout: 1500,
+                            correlationId: '$message.header#/corr',
+                            dependsOn: ['s0'],
+                            parameters: [
+                                { name: 'q', in: 'query', value: 'dog' },
+                                { name: 'wfParam', value: 42 },
+                            ],
+                            requestBody: {
+                                contentType: 'application/json',
+                                payload: { hello: 'world' },
+                                replacements: [{ target: '/hello', value: 'mars' }],
+                            },
+                            successCriteria: [
+                                { context: '$statusCode', condition: '$statusCode == 200', type: 'simple' },
+                                { condition: '$.ok == true' },
+                            ],
+                            onSuccess: [
+                                { name: 'goStep', type: 'goto', stepId: 's2' },
+                                { name: 'goWf', type: 'goto', workflowId: 'wfOther' },
+                                { name: 'endAct', type: 'end' },
+                            ],
+                            onFailure: [
+                                { name: 'retryStep', type: 'retry', stepId: 's1', retryLimit: 3, retryAfter: 1 },
+                                { name: 'retryWf', type: 'goto', workflowId: 'wfErr', retryLimit: 2 },
+                                { name: 'retryDelayOnly', type: 'retry', retryAfter: 5 },
+                                { name: 'failEnd', type: 'end' },
+                            ],
+                            outputs: {
+                                id: '$response.body#/0/id',
+                            },
+                        },
+                        {
+                            stepId: 's2',
+                            workflowId: 'subWf',
+                            requestBody: {
+                                payload: 'raw-string-payload',
+                            },
+                        },
+                        {
+                            stepId: 's3',
+                            channelPath: '/events/pet',
+                            action: 'send',
+                            requestBody: {},
+                        },
+                        {
+                            stepId: 's4',
+                            operationId: 'unlinkedOp',
+                        },
+                        {
+                            stepId: 's5',
+                        },
+                    ],
+                },
+                {
+                    workflowId: 'wfMinimal',
+                    steps: [{ stepId: 'minStep' }],
+                },
+            ],
+        });
 
-it("should cover empty schema in property", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-components:
-  schemas:
-    A:
-      type: object
-      properties:
-        a: {}
-`); });
-
-it("should cover deep schema in property", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-components:
-  schemas:
-    A:
-      type: object
-      properties:
-        a:
-          type: object
-          properties:
-            b:
-              type: string
-`); });
-
-it("should cover empty required fields", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-components:
-  schemas:
-    A:
-      type: object
-      required: [a]
-      properties:
-        a:
-          type: object
-          properties:
-            b:
-              type: string
-`); });
-
-it("should cover variant examples", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, []); });
-
-it("should cover variant examples files", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", operations: [], filepath: "a"}] as any); });
-
-it("should cover empty required prop in object", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-components:
-  schemas:
-    A:
-      type: object
-      required: [a]
-      properties:
-        a:
-          type: object
-`); generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-components:
-  schemas:
-    A:
-      type: object
-      properties:
-        a:
-          type: object
-`); });
-
-it("should cover variant examples 2", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{path: ""}]}] as any); });
-
-it("should cover variant examples 3", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-      operationId: a
-`, [{language: "javascript", files: [{filepath: "a", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 4", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "_p_get", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 5", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "_p_get2", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 6", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "_p_", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 7", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "_get", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 8", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 9", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "_p", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 10", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "_get", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 11", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 12", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "_p", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 13", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "_p_get_", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 14", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 15", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "", path: "p_get", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 16", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "", path: "p_get", content: new TextEncoder().encode("x")}], includeImports: true, includeWrapping: false}] as any); });
-
-it("should cover variant examples 17", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "sh", filepath: "p_get", content: "x"}] as any); });
-
-it("should cover variant examples 18", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "sh", filepath: "p_get", content: "x", includeImports: false, includeWrapping: false}] as any); });
-
-it("should cover variant examples 19", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "sh", filepath: "p_get", content: "x", includeImports: true, includeWrapping: true}] as any); });
-
-it("should cover variant examples 16 with full match", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "_p_get", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 17 with full match 2", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "_p_get_", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 20", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "_p_post", content: new TextEncoder().encode("x")}]}] as any); });
-
-it("should cover variant examples 21", async () => { generateAOTHtml(`openapi: 3.2.0
-info:
-  title: a
-paths:
-  /p:
-    get:
-      description: d
-`, [{language: "javascript", files: [{filepath: "_get", content: new TextEncoder().encode("x")}]}] as any); });    it('should cover includeImports and includeWrapping false variants', () => {
-        const spec = {
-            openapi: '3.2.0',
-            info: { title: 'Test', version: '1.0' },
-            paths: {
-                '/test': {
-                    get: {
-                        responses: { '200': { description: 'ok' } }
-                    }
-                }
-            }
-        };
-        const examples: any[] = [
+        const examples: CodeExample[] = [
             {
-                language: 'javascript',
-                filepath: 'test_get',
-                content: 'console.log("no imports no wrap")',
-                includeImports: false,
-                includeWrapping: false
-            }
-        ];
-        const html = generateAOTHtml(JSON.stringify(spec), examples);
-        expect(html).toContain('cdd-hide-if-imports');
-        expect(html).toContain('cdd-hide-if-wrapping');
-    });
-    it('should cover includeImports and includeWrapping true variants', () => {
-        const spec = {
-            openapi: '3.2.0',
-            info: { title: 'Test', version: '1.0' },
-            paths: {
-                '/test': {
-                    get: {
-                        responses: { '200': { description: 'ok' } }
-                    }
-                }
-            }
-        };
-        const examples: any[] = [
-            {
-                language: 'javascript',
-                filepath: 'test_get',
-                content: 'console.log("yes imports yes wrap")',
+                language: 'ts',
+                filepath: 'workflow_wfMain',
+                content: 'tsWf()',
                 includeImports: true,
-                includeWrapping: true
-            }
-        ];
-        const html = generateAOTHtml(JSON.stringify(spec), examples);
-        expect(html).toContain('cdd-show-if-imports');
-        expect(html).toContain('cdd-show-if-wrapping');
-    });
-    it('should cover empty langEx for specific language', () => {
-        const spec = {
-            openapi: '3.2.0',
-            info: { title: 'Test', version: '1.0' },
-            paths: {
-                '/test': {
-                    get: {
-                        operationId: 'op1',
-                        responses: { '200': { description: 'ok' } }
-                    }
-                }
-            }
-        };
-        const examples: any[] = [
+                includeWrapping: true,
+            },
             {
-                language: 'rust', // Not javascript!
-                filepath: 'test_get',
-                content: 'console.log("...")'
-            }
+                language: 'sh',
+                filepath: 'workflow_wfMain',
+                content: 'shWf()',
+                includeImports: false,
+                includeWrapping: false,
+            },
+            {
+                language: 'python',
+                filepath: 'onPetWebhook',
+                content: 'pyWh()',
+                includeImports: true,
+                includeWrapping: false,
+            },
         ];
-        const html = generateAOTHtml(JSON.stringify(spec), examples);
-        expect(html).toContain('op1');
+
+        const combinedHtml = generateAOTHtml(openApiYaml, examples, 'dark', false, {}, arazzoJson);
+        expect(combinedHtml).toContain('id="workflow-wfMain"');
+        expect(combinedHtml).toContain('id="step-wfMain-s1"');
+        expect(combinedHtml).toContain('WEBHOOK: petWebhook');
+        expect(combinedHtml).toContain('language-typescript');
+        expect(combinedHtml).toContain('language-bash');
+
+        // Also test renderWorkflowSection directly with custom linkedTarget without anchorId or method
+        const customSection = renderWorkflowSection(
+            {
+                workflow: { workflowId: 'customWf', steps: [{ stepId: 'cs1' }, { stepId: 'cs2' }, { stepId: 'cs3' }] },
+                resolvedParameters: [],
+                resolvedSuccessActions: [],
+                resolvedFailureActions: [],
+                normalizedSteps: [
+                    {
+                        step: { stepId: 'cs1' },
+                        mergedParameters: [],
+                        resolvedOnSuccess: [],
+                        resolvedOnFailure: [],
+                        linkedTarget: { kind: 'operation' },
+                        upstreamStepIds: [],
+                    },
+                    {
+                        step: { stepId: 'cs2' },
+                        mergedParameters: [],
+                        resolvedOnSuccess: [],
+                        resolvedOnFailure: [],
+                        linkedTarget: { kind: 'workflow' },
+                        upstreamStepIds: [],
+                    },
+                    {
+                        step: { stepId: 'cs3' },
+                        mergedParameters: [],
+                        resolvedOnSuccess: [],
+                        resolvedOnFailure: [],
+                        linkedTarget: { kind: 'channel' },
+                        upstreamStepIds: [],
+                    },
+                ],
+                cliPreview: 'curl custom',
+            },
+            { spec: { openapi: '3.2.0', info: { title: 'T', version: '1' } }, codeExamples: {} },
+            ['javascript'],
+        );
+        expect(customSection).toContain('customWf');
     });
+});

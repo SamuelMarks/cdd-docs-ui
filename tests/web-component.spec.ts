@@ -1,6 +1,137 @@
+/**
+ * Unit tests for progressive enhancement and the `<cdd-api-docs>` custom web component (`src/web-component.ts`).
+ * @module web-component.spec
+ */
 // @vitest-environment jsdom
-import { describe, it, expect, beforeEach, vi, afterEach, Mock } from 'vitest';
-import { initApiDocs } from '../src/web-component';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import * as aotGenerator from '../src/aot-generator';
+import { initApiDocs, CDDApiDocs, normalizeSdkExamplesInput, registerWebComponent } from '../src/web-component';
+
+/**
+ * Helper to create a `<cdd-api-docs>` custom element.
+ * @returns A strongly-typed `CDDApiDocs` element instance.
+ */
+function createApiDocsElement(): CDDApiDocs {
+    return document.createElement('cdd-api-docs');
+}
+
+/**
+ * Queries a required element matching `selector` and verifies its runtime constructor type.
+ * @param root The parent node to query within.
+ * @param selector The CSS selector to query.
+ * @param ctor The expected element constructor for `instanceof` narrowing.
+ * @returns The narrowed element instance.
+ */
+function getRequiredElement<T extends Element>(root: ParentNode, selector: string, ctor: new () => T): T {
+    const el = root.querySelector(selector);
+    if (!(el instanceof ctor)) {
+        throw new Error(`Expected element matching "${selector}"`);
+    }
+    return el;
+}
+
+describe('normalizeSdkExamplesInput', () => {
+    it('should normalize strings, CDDOutput objects, docs.json payloads, operations arrays, and invalid inputs', () => {
+        expect(normalizeSdkExamplesInput(null)).toEqual([]);
+        expect(normalizeSdkExamplesInput('invalid json')).toEqual([]);
+        expect(normalizeSdkExamplesInput(42)).toEqual([]);
+        expect(normalizeSdkExamplesInput([null, 123])).toEqual([]);
+
+        const fromObject = normalizeSdkExamplesInput({
+            endpoints: {
+                '/pets': {
+                    get: 'fetch("/pets")',
+                    post: '',
+                },
+            },
+        });
+        expect(fromObject).toHaveLength(2);
+        expect(fromObject[0]?.language).toBe('typescript');
+        expect(fromObject[0]?.filepath).toBe('_pets_get');
+        expect(fromObject[0]?.content).toBe('fetch("/pets")');
+        expect(fromObject[1]?.content).toBe('');
+
+        const fromDocsJson = normalizeSdkExamplesInput([
+            {
+                language: 'ruby',
+                filepath: 'docs.json',
+                content: JSON.stringify({
+                    endpoints: {
+                        '/pets': {
+                            get: "puts 'hello pets'",
+                            post: '',
+                        },
+                        '/invalid': 'not-an-object',
+                    },
+                }),
+            },
+            {
+                filepath: 'ops.json',
+                content: JSON.stringify([
+                    null,
+                    {
+                        language: 'go',
+                        operations: [
+                            null,
+                            {
+                                path: '/items',
+                                method: 'POST',
+                                code: { snippet: 'fmt.Println("items")' },
+                            },
+                            {
+                                code: {},
+                            },
+                            {
+                                path: '/no-code',
+                                method: 'GET',
+                            },
+                        ],
+                    },
+                    {
+                        language: 'rust',
+                        operations: 'not-array',
+                    },
+                    {
+                        operations: [],
+                    },
+                ]),
+            },
+            {
+                language: 'python',
+                filepath: 'docs.json',
+                content: '{"endpoints": malformed',
+            },
+            {
+                language: 'python',
+                filepath: 'other.json',
+                content: JSON.stringify({ unrelated: true }),
+            },
+            {
+                endpoints: {
+                    '/inline': { delete: 'del()' },
+                    '/bad': null,
+                },
+            },
+            {
+                filepath: 'raw.ts',
+                content: 'console.log(1)',
+                includeImports: true,
+                includeWrapping: false,
+            },
+            {
+                language: 'python',
+                filepath: 'no-content.py',
+            },
+        ]);
+
+        expect(fromDocsJson.some(e => e.language === 'ruby' && e.filepath === '_pets_get')).toBe(true);
+        expect(fromDocsJson.some(e => e.language === 'go' && e.filepath === '_items_post')).toBe(true);
+        expect(fromDocsJson.some(e => e.language === 'typescript' && e.filepath === '_inline_delete')).toBe(true);
+        const rawTs = fromDocsJson.find(e => e.filepath === 'raw.ts');
+        expect(rawTs?.includeImports).toBe(true);
+        expect(rawTs?.includeWrapping).toBe(false);
+    });
+});
 
 describe('progressive-enhancement', () => {
     beforeEach(() => {
@@ -44,7 +175,6 @@ describe('progressive-enhancement', () => {
              <pre><code>Some test code</code></pre>
            </div>
            <div style="position: relative;">
-             <!-- Button with no parentElement/code to test edge cases, though in DOM it always has parent, so we simulate missing code -->
              <div class="no-code-parent">
                <button class="cdd-copy-btn">Copy</button>
              </div>
@@ -54,83 +184,124 @@ describe('progressive-enhancement', () => {
     `;
     });
 
-    it('should initialize search and toggle visibility', async () => {
-        // Mock setTimeout to run immediately for search debounce
-        const origSetTimeout = window.setTimeout;
-        (window as any).setTimeout = (cb: Function) => cb();
+    it('should initialize search without duplicating input on repeated calls and toggle visibility', () => {
+        vi.useFakeTimers();
 
         initApiDocs();
-        const searchInput = document.querySelector('.cdd-search-input') as HTMLInputElement;
-        expect(searchInput).toBeDefined();
+        initApiDocs(); // calling twice must reuse existing .cdd-search-input
+        const searchInputs = document.querySelectorAll<HTMLInputElement>('.cdd-search-input');
+        expect(searchInputs.length).toBe(1);
+
+        const searchInput = getRequiredElement(document, '.cdd-search-input', HTMLInputElement);
         expect(searchInput.getAttribute('aria-label')).toBe('Search endpoints...');
 
-        const item = document.querySelector('.cdd-toc-item') as HTMLElement;
-        const section = document.querySelector('.cdd-endpoint') as HTMLElement;
+        const item = getRequiredElement(document, '.cdd-toc-item', HTMLElement);
+        const section = getRequiredElement(document, '.cdd-endpoint', HTMLElement);
 
-        // Filter to hide
+        searchInput.value = 'non';
+        searchInput.dispatchEvent(new Event('input'));
         searchInput.value = 'nonexistent';
         searchInput.dispatchEvent(new Event('input'));
-        await new Promise(r => origSetTimeout(r, 0)); // wait for debounce
+        vi.advanceTimersByTime(200);
         expect(item.style.display).toBe('none');
         expect(section.style.display).toBe('none');
 
-        // Filter to show
         searchInput.value = 'users';
         searchInput.dispatchEvent(new Event('input'));
-        await new Promise(r => origSetTimeout(r, 0)); // wait for debounce
+        vi.advanceTimersByTime(200);
         expect(item.style.display).toBe('block');
         expect(section.style.display).toBe('grid');
 
-        window.setTimeout = origSetTimeout;
+        vi.useRealTimers();
     });
 
-    it('should sync proxies with hidden inputs', () => {
+    it('should handle search on elements lacking textContent or href', () => {
+        vi.useFakeTimers();
+        document.body.innerHTML = `
+            <input type="text" class="cdd-search-input" />
+            <a class="cdd-toc-item"></a>
+            <article class="cdd-endpoint"></article>
+        `;
+        const item = getRequiredElement(document, '.cdd-toc-item', HTMLElement);
+        const endpoint = getRequiredElement(document, '.cdd-endpoint', HTMLElement);
+        Object.defineProperty(item, 'textContent', { value: null });
+        Object.defineProperty(endpoint, 'textContent', { value: null });
+
+        initApiDocs();
+        const searchInput = getRequiredElement(document, '.cdd-search-input', HTMLInputElement);
+        searchInput.value = 'test';
+        searchInput.dispatchEvent(new Event('input'));
+        vi.advanceTimersByTime(200);
+
+        expect(item.style.display).toBe('none');
+        expect(endpoint.style.display).toBe('none');
+        vi.useRealTimers();
+    });
+
+    it('should sync proxies with hidden inputs and handle missing target inputs gracefully', () => {
         initApiDocs();
 
-        const rustProxy = document.getElementById('proxy-rust') as HTMLInputElement;
-        const rustReal = document.getElementById('lang-opt-rust') as HTMLInputElement;
+        const rustProxy = getRequiredElement(document, '#proxy-rust', HTMLInputElement);
+        const rustReal = getRequiredElement(document, '#lang-opt-rust', HTMLInputElement);
 
         rustProxy.checked = true;
         rustProxy.dispatchEvent(new Event('change'));
         expect(rustReal.checked).toBe(true);
 
-        const importsProxy = document.querySelector('input[data-onchange-proxy*="opt-imports"]') as HTMLInputElement;
-        const importsReal = document.getElementById('opt-imports') as HTMLInputElement;
+        const importsProxy = getRequiredElement(
+            document,
+            'input[data-onchange-proxy*="opt-imports"]',
+            HTMLInputElement,
+        );
+        const importsReal = getRequiredElement(document, '#opt-imports', HTMLInputElement);
 
         importsProxy.checked = true;
         importsProxy.dispatchEvent(new Event('change'));
         expect(importsReal.checked).toBe(true);
 
-        const wrappingProxy = document.querySelector('input[data-onchange-proxy*="opt-wrapping"]') as HTMLInputElement;
-        const wrappingReal = document.getElementById('opt-wrapping') as HTMLInputElement;
+        const wrappingProxy = getRequiredElement(
+            document,
+            'input[data-onchange-proxy*="opt-wrapping"]',
+            HTMLInputElement,
+        );
+        const wrappingReal = getRequiredElement(document, '#opt-wrapping', HTMLInputElement);
 
         wrappingProxy.checked = true;
         wrappingProxy.dispatchEvent(new Event('change'));
         expect(wrappingReal.checked).toBe(true);
+
+        // Now remove real inputs and verify proxy events do not throw
+        rustReal.remove();
+        importsReal.remove();
+        wrappingReal.remove();
+        rustProxy.dispatchEvent(new Event('change'));
+        importsProxy.dispatchEvent(new Event('change'));
+        wrappingProxy.dispatchEvent(new Event('change'));
+        expect(document.getElementById('lang-opt-rust')).toBeNull();
     });
 
     it('should persist theme to localStorage', () => {
-        // Set initial state in localStorage
         localStorage.setItem('cdd-theme', 'dark');
 
-        // Inject dark mode input
         const themeInput = document.createElement('input');
         themeInput.type = 'checkbox';
         themeInput.id = 'opt-dark-mode';
         document.body.appendChild(themeInput);
 
         initApiDocs();
-
-        // Should load from storage
         expect(themeInput.checked).toBe(true);
 
-        // Should save to storage on change
         themeInput.checked = false;
         themeInput.dispatchEvent(new Event('change'));
         expect(localStorage.getItem('cdd-theme')).toBe('light');
+
+        themeInput.checked = true;
+        themeInput.dispatchEvent(new Event('change'));
+        expect(localStorage.getItem('cdd-theme')).toBe('dark');
     });
 
     it('should setup copy buttons and copy to clipboard', async () => {
+        vi.useFakeTimers();
         let clipboardText = '';
         Object.assign(navigator, {
             clipboard: {
@@ -141,48 +312,56 @@ describe('progressive-enhancement', () => {
             },
         });
 
-        // Mock setTimeout to run immediately for this test
-        const origSetTimeout = window.setTimeout;
-        (window as any).setTimeout = (cb: Function) => cb();
-
         initApiDocs();
 
-        const buttons = document.querySelectorAll('.cdd-copy-btn');
+        const buttons = document.querySelectorAll<HTMLButtonElement>('.cdd-copy-btn');
         expect(buttons.length).toBe(2);
 
-        const validBtn = buttons[0] as HTMLButtonElement;
-        const invalidBtn = buttons[1] as HTMLButtonElement; // missing code element
-        const invalidParentBtn = document.createElement('button');
-        invalidParentBtn.classList.add('cdd-copy-btn');
-        // it has no parent
+        const validBtn = buttons[0]!;
+        const invalidBtn = buttons[1]!;
 
-        // Test missing parent
-        invalidParentBtn.click(); // no throw
-
-        // Test missing code
         invalidBtn.click();
-        await new Promise(r => origSetTimeout(r, 0)); // tick
+        await Promise.resolve();
         expect(clipboardText).toBe('');
 
-        // Test valid code copy
         validBtn.click();
-        await new Promise(r => origSetTimeout(r, 0)); // tick
+        await Promise.resolve();
         expect(clipboardText).toBe('Some test code');
-        expect(validBtn.textContent).toBe('Copy'); // reverted immediately due to mock
+        expect(validBtn.textContent).toBe('Copied!');
+        expect(validBtn.classList.contains('cdd-copied')).toBe(true);
+
+        vi.advanceTimersByTime(2000);
+        expect(validBtn.textContent).toBe('Copy');
         expect(validBtn.classList.contains('cdd-copied')).toBe(false);
 
-        // Test error case
-        const codeEl = validBtn.parentElement!.querySelector('code')!;
-        codeEl.textContent = 'error_trigger';
-        validBtn.click();
-        await new Promise(r => origSetTimeout(r, 0)); // tick
+        const codeEl = validBtn.parentElement?.querySelector('code');
+        if (codeEl) {
+            Object.defineProperty(codeEl, 'textContent', { value: null, configurable: true });
+            validBtn.click();
+            await Promise.resolve();
+            expect(clipboardText).toBe('');
 
-        // Restore setTimeout
-        window.setTimeout = origSetTimeout;
+            Object.defineProperty(codeEl, 'textContent', {
+                value: 'error_trigger',
+                configurable: true,
+            });
+            validBtn.click();
+            await Promise.resolve();
+        }
+
+        // Detached button without parentElement
+        const detachedBtn = document.createElement('button');
+        detachedBtn.className = 'cdd-copy-btn';
+        document.body.appendChild(detachedBtn);
+        initApiDocs();
+        Object.defineProperty(detachedBtn, 'parentElement', { value: null });
+        detachedBtn.click();
+        await Promise.resolve();
+
+        vi.useRealTimers();
     });
 
-    it('should handle Try It Out form submissions', async () => {
-        // Setup form
+    it('should handle Try It Out form submissions including dynamic gateway proxy routing', async () => {
         const formHtml = `
       <form class="cdd-try-form" method="POST" data-method="POST" data-route="/users/{id}">
         <input name="id" data-in="path" value="123">
@@ -196,14 +375,22 @@ describe('progressive-enhancement', () => {
         <pre><code class="cdd-try-body"></code></pre>
       </div>
     `;
-        const main = document.querySelector('.cdd-main')!;
-        main.innerHTML += formHtml;
+        const main = document.querySelector('.cdd-main');
+        if (main) main.innerHTML += formHtml;
 
         initApiDocs();
 
-        let fetchArgs: any[] = [];
-        global.fetch = vi.fn().mockImplementation(async (...args) => {
-            fetchArgs = args;
+        let capturedUrl = '';
+        let capturedMethod: string | undefined;
+        let capturedHeaders: Record<string, string> = {};
+        let capturedBody: BodyInit | null | undefined;
+        global.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+            capturedUrl = url;
+            capturedMethod = init?.method;
+            if (init?.headers && !(init.headers instanceof Headers) && !Array.isArray(init.headers)) {
+                capturedHeaders = init.headers;
+            }
+            capturedBody = init?.body;
             return {
                 status: 200,
                 statusText: 'OK',
@@ -211,205 +398,131 @@ describe('progressive-enhancement', () => {
             };
         });
 
-        const form = document.querySelector('.cdd-try-form') as HTMLFormElement;
+        const form = getRequiredElement(document, '.cdd-try-form', HTMLFormElement);
         form.dispatchEvent(new Event('submit', { cancelable: true }));
-        await new Promise(r => setTimeout(r, 10)); // let fetch promise and text promise resolve
+        await new Promise(r => setTimeout(r, 10));
 
-        expect(fetchArgs[0]).toBe('https://api.example.com/users/123?q=search');
-        expect(fetchArgs[1].method).toBe('POST');
-        expect(fetchArgs[1].headers['X-Api-Key']).toBe('secret');
-        expect(fetchArgs[1].headers['Content-Type']).toBe('application/json');
-        expect(fetchArgs[1].body).toBe('{"name":"test"}');
+        expect(capturedUrl).toBe('https://api.example.com/users/123?q=search');
+        expect(capturedMethod).toBe('POST');
+        expect(capturedHeaders['X-Api-Key']).toBe('secret');
+        expect(capturedHeaders['Content-Type']).toBe('application/json');
+        expect(capturedBody).toBe('{"name":"test"}');
 
-        const statusEl = document.querySelector('.cdd-try-status') as HTMLElement;
-        const bodyEl = document.querySelector('.cdd-try-body') as HTMLElement;
+        const statusEl = getRequiredElement(document, '.cdd-try-status', HTMLElement);
+        const bodyEl = getRequiredElement(document, '.cdd-try-body', HTMLElement);
         expect(statusEl.textContent).toBe('Status: 200 OK');
         expect(bodyEl.textContent).toContain('success');
-        expect(bodyEl.textContent).toContain('true'); // it was pretty-printed
 
-        // Test error case
+        // Error case
         global.fetch = vi.fn().mockRejectedValue(new Error('Network fail'));
         form.dispatchEvent(new Event('submit', { cancelable: true }));
         await new Promise(r => setTimeout(r, 10));
         expect(statusEl.textContent).toBe('Error');
         expect(bodyEl.textContent).toBe('Network fail');
 
-        // Test empty value inputs
+        // Empty input & non-JSON response fallback
         const emptyInput = document.createElement('input');
         emptyInput.name = 'empty';
         emptyInput.value = '';
         form.appendChild(emptyInput);
-        form.dispatchEvent(new Event('submit', { cancelable: true }));
-        await new Promise(r => setTimeout(r, 10));
-        // Should skip empty input safely without crashing
 
-        // Test non-JSON response fallback
-        global.fetch = vi.fn().mockImplementation(async () => {
-            return {
-                status: 404,
-                statusText: 'Not Found',
-                text: async () => 'Not found plaintext',
-            };
-        });
+        global.fetch = vi.fn().mockImplementation(async () => ({
+            status: 404,
+            statusText: 'Not Found',
+            text: async () => 'Not found plaintext',
+        }));
         form.dispatchEvent(new Event('submit', { cancelable: true }));
         await new Promise(r => setTimeout(r, 10));
         expect(bodyEl.textContent).toBe('Not found plaintext');
     });
 
-    it('should handle missing inputs gracefully during sync', () => {
-        initApiDocs(); // with empty DOM
-        // Should not throw
-        const el = document.createElement('cdd-api-docs');
-        document.body.appendChild(el);
-        // test inner dispatch
-        window.dispatchEvent(new Event('DOMContentLoaded'));
-    });
-
-    it('should handle trying to copy when no parent element exists (impossible in valid DOM but covers branch)', () => {
-        initApiDocs(); // with empty DOM
-        // This is covered by invalidParentBtn test earlier, but to be sure we hit line 127
-    });
-
-    it('should handle Try It Out form edge cases (JSON parse failure, missing elements, non-GET methods, no data-route)', async () => {
-        const formHtml = `
-      <form class="cdd-try-form" method="PUT">
-        <!-- no data-route -->
-        <input name="test" data-in="cookie" value="ignore">
-        <textarea name="requestBody">plain text body</textarea>
-        <button type="submit">Execute</button>
+    it('should handle Try It Out edge cases (missing response container, missing status/body elements, GET method, string errors)', async () => {
+        document.body.innerHTML = `
+      <form id="form-no-resp" class="cdd-try-form" method="GET"></form>
+      <div class="not-try-response"></div>
+      <form id="form-empty-resp" class="cdd-try-form" method="PUT">
+        <input name="cookieParam" data-in="cookie" value="ignored">
+        <input name="Content-Type" data-in="header" value="text/plain">
+        <textarea name="requestBody">raw</textarea>
       </form>
-      <div class="cdd-try-response" style="display: none;">
-        <!-- missing status and body elements -->
-      </div>
-    `;
-        const main = document.querySelector('.cdd-main')!;
-        main.innerHTML += formHtml;
-        initApiDocs();
-
-        global.fetch = vi.fn().mockResolvedValue({
-            status: 200,
-            statusText: 'OK',
-            text: async () => 'Not JSON',
-        });
-
-        const form = document.querySelector(".cdd-try-form[method='PUT']") as HTMLFormElement;
-        form.dispatchEvent(new Event('submit', { cancelable: true }));
-        await new Promise(r => setTimeout(r, 10));
-
-        expect(global.fetch).toHaveBeenCalled();
-
-        // Test throw with string error
-        global.fetch = vi.fn().mockRejectedValue('String Error');
-        form.dispatchEvent(new Event('submit', { cancelable: true }));
-        await new Promise(r => setTimeout(r, 10));
-    });
-
-    it('should handle Try It Out with invalid JSON but valid DOM elements', async () => {
-        const formHtml = `
-      <form class="cdd-try-form" method="POST" data-route="/invalid">
-        <input name="Content-Type" data-in="header" value="application/xml">
-        <textarea name="requestBody">xml body</textarea>
-        <button type="submit">Execute</button>
-      </form>
-      <div class="cdd-try-response" style="display: none;">
+      <div class="cdd-try-response"></div>
+      <form id="form-full-resp" class="cdd-try-form" method="POST" data-method="POST" data-route="/ping"></form>
+      <div class="cdd-try-response">
         <div class="cdd-try-status"></div>
-        <pre><code class="cdd-try-body"></code></pre>
+        <div class="cdd-try-body"></div>
       </div>
     `;
-        const main = document.querySelector('.cdd-main')!;
-        main.innerHTML += formHtml;
         initApiDocs();
 
         global.fetch = vi.fn().mockResolvedValue({
             status: 200,
             statusText: 'OK',
-            text: async () => 'Not JSON',
+            text: async () => 'OK',
         });
 
-        const form = document.querySelector(".cdd-try-form[data-route='/invalid']") as HTMLFormElement;
-        form.dispatchEvent(new Event('submit', { cancelable: true }));
+        const formNoResp = getRequiredElement(document, '#form-no-resp', HTMLFormElement);
+        formNoResp.dispatchEvent(new Event('submit', { cancelable: true }));
+        await new Promise(r => setTimeout(r, 10));
+        expect(global.fetch).not.toHaveBeenCalled();
+
+        const formEmptyResp = getRequiredElement(document, '#form-empty-resp', HTMLFormElement);
+        formEmptyResp.dispatchEvent(new Event('submit', { cancelable: true }));
+        await new Promise(r => setTimeout(r, 10));
+        expect(global.fetch).toHaveBeenCalledTimes(1);
+
+        global.fetch = vi.fn().mockRejectedValue('String error');
+        formEmptyResp.dispatchEvent(new Event('submit', { cancelable: true }));
         await new Promise(r => setTimeout(r, 10));
 
-        const bodyEl = document.querySelector(
-            ".cdd-try-form[data-route='/invalid'] + .cdd-try-response .cdd-try-body",
-        ) as HTMLElement;
-        expect(bodyEl.textContent).toBe('Not JSON');
-
-        // Test throw with string error with elements present
-        global.fetch = vi.fn().mockRejectedValue('String Error with Elements');
-        form.dispatchEvent(new Event('submit', { cancelable: true }));
+        const formFullResp = getRequiredElement(document, '#form-full-resp', HTMLFormElement);
+        formFullResp.dispatchEvent(new Event('submit', { cancelable: true }));
         await new Promise(r => setTimeout(r, 10));
-        expect(bodyEl.textContent).toBe('String Error with Elements');
+        const bodyEl = document.querySelector('#form-full-resp + .cdd-try-response .cdd-try-body');
+        expect(bodyEl?.textContent).toBe('String error');
     });
 
-    it('should cover translations setter with empty spec attribute', () => {
-        const el = document.createElement('cdd-api-docs') as any;
-        el.setAttribute('spec', '');
-        el.translations = { paths: 'Paths' };
-        expect(el.innerHTML).not.toBeNull();
-    });
-
-    it('should cover renderSpec error handling with non-Error', async () => {
-        const el = document.createElement('cdd-api-docs') as any;
-        // Force fetch to reject with a string
-        global.fetch = vi.fn().mockRejectedValue('Just a string error');
-        await el.renderSpec('https://example.com/spec');
-        expect(el.innerHTML).toContain('Just a string error');
-
-        // Force error with Error lacking stack
-        const err = new Error('No stack error');
-        err.stack = undefined;
-        global.fetch = vi.fn().mockRejectedValue(err);
-        await el.renderSpec('https://example.com/spec');
-        expect(el.innerHTML).toContain('No stack error');
-    });
-
-    it('should re-import web-component to cover already registered custom element branch', async () => {
-        vi.resetModules();
-        await import('../src/web-component');
-    });
-
-    it('should render spec with dark theme from localStorage', async () => {
-        localStorage.setItem('cdd-theme', 'dark');
-        const el = document.createElement('cdd-api-docs') as any;
-        await el.renderSpec(`openapi: 3.0.0
-info:
-  title: Theme API
-  version: 1.0.0`);
-        localStorage.removeItem('cdd-theme');
-        expect(el.innerHTML).toContain('id="opt-dark-mode"');
-        expect(el.innerHTML).toContain('checked');
-    });
     describe('CDDApiDocs Custom Element', () => {
-        describe('to_docs_json parsing logic', () => {
-            it('unrolls docs.json snippets correctly and respects the wrapper language', async () => {
-                document.body.innerHTML = '<cdd-api-docs></cdd-api-docs>';
-                const el = document.querySelector('cdd-api-docs') as any;
-                el.sdkExamples = [{
+        it('should preserve BOTH <style> blocks (.no-js and main layout CSS) when rendering spec', async () => {
+            const el = createApiDocsElement();
+            el.setAttribute('theme', 'dark');
+            document.body.appendChild(el);
+
+            await el.renderSpec(`openapi: 3.0.0
+info:
+  title: Styled API
+  version: 1.0.0`);
+            expect(el.innerHTML).toContain('.no-js .cdd-copy-btn');
+            expect(el.innerHTML).toContain('.cdd-layout');
+            expect(el.innerHTML).toContain('--cdd-primary: #005ac1');
+        });
+
+        it('should unroll docs.json snippets via sdkExamples setter', () => {
+            const el = createApiDocsElement();
+            el.sdkExamples = [
+                {
                     language: 'ruby',
                     filepath: 'docs.json',
                     content: JSON.stringify({
                         endpoints: {
                             '/pets': {
-                                'get': "puts 'hello pets'"
-                            }
-                        }
-                    })
-                }];
-                expect(el.sdkExamples).toHaveLength(1);
-                expect(el.sdkExamples[0].language).toBe('ruby');
-                expect(el.sdkExamples[0].content).toBe("puts 'hello pets'");
-                expect(el.sdkExamples[0].filepath).toBe('_pets_get');
-            });
+                                get: "puts 'hello pets'",
+                            },
+                        },
+                    }),
+                },
+            ];
+            expect(el.sdkExamples).toHaveLength(1);
+            expect(el.sdkExamples[0]?.language).toBe('ruby');
+            expect(el.sdkExamples[0]?.content).toBe("puts 'hello pets'");
+            expect(el.sdkExamples[0]?.filepath).toBe('_pets_get');
         });
 
-        it('should allow getting and setting translations', () => {
-            const el = document.createElement('cdd-api-docs') as any;
+        it('should allow getting and setting translations and re-rendering', () => {
+            const el = createApiDocsElement();
             expect(el.translations).toEqual({});
             el.translations = { paths: 'My Paths' };
             expect(el.translations).toEqual({ paths: 'My Paths' });
 
-            // Trigger render from setter via spec
             const yamlStr = `openapi: 3.0.0
 info:
   title: T
@@ -418,57 +531,54 @@ info:
             el.translations = { paths: 'Different Paths' };
             expect(el.innerHTML).toContain('Different Paths');
 
-            // Trigger render from setter via layout innerHTML branch
-            const el2 = document.createElement('cdd-api-docs') as any;
+            const el2 = createApiDocsElement();
             el2.innerHTML = '<div class="cdd-layout"></div>';
             document.body.appendChild(el2);
-            el2.translations = { paths: 'More Paths' };
+            expect(el2.querySelector('.cdd-layout')).not.toBeNull();
         });
 
         it('should handle attributeChangedCallback edge cases', () => {
-            const el = document.createElement('cdd-api-docs') as any;
-            // We can directly call attributeChangedCallback
+            const el = createApiDocsElement();
             el.attributeChangedCallback('unknown-attr', 'old', 'new');
             el.attributeChangedCallback('spec', 'same', 'same');
-            // This shouldn't throw or do anything
             expect(el.innerHTML).toBe('');
         });
-        it('should register and render a spec attribute pre-connection', () => {
-            const el = document.createElement('cdd-api-docs') as any;
-            const yamlStr = `
-openapi: 3.0.0
+
+        it('should register and render spec and spec-content attributes', () => {
+            const el = createApiDocsElement();
+            el.setAttribute(
+                'spec',
+                `openapi: 3.0.0
 info:
   title: Pre Connection API
-  version: 1.0.1
-`;
-            el.setAttribute('spec', yamlStr);
+  version: 1`,
+            );
             document.body.appendChild(el);
             expect(el.innerHTML).toContain('Pre Connection API');
-        });
 
-        it('should register and render a spec-content attribute', () => {
-            const el = document.createElement('cdd-api-docs') as any;
-            const yamlStr = `
-openapi: 3.0.0
+            const el2 = createApiDocsElement();
+            el2.setAttribute(
+                'spec-content',
+                `openapi: 3.0.0
 info:
   title: Spec Content API
-  version: 1.0.1
-`;
-            el.setAttribute('spec-content', yamlStr);
-            document.body.appendChild(el);
-            expect(el.innerHTML).toContain('Spec Content API');
+  version: 1`,
+            );
+            document.body.appendChild(el2);
+            expect(el2.innerHTML).toContain('Spec Content API');
         });
 
-        it('should fetch and render spec from URL', async () => {
-            const el = document.createElement('cdd-api-docs') as any;
+        it('should fetch and render spec from URL and handle 404 and non-404 errors', async () => {
+            const el = createApiDocsElement();
             document.body.appendChild(el);
 
-            const yamlStr = `
-openapi: 3.0.0
+            await el.renderSpec('');
+            expect(el.innerHTML).toBe('');
+
+            const yamlStr = `openapi: 3.0.0
 info:
   title: Fetched URL API
-  version: 1.0.1
-`;
+  version: 1.0.1`;
             global.fetch = vi.fn().mockResolvedValue({
                 ok: true,
                 text: async () => yamlStr,
@@ -477,190 +587,247 @@ info:
             await el.renderSpec('https://example.com/spec.yaml');
             expect(el.innerHTML).toContain('Fetched URL API');
             expect(global.fetch).toHaveBeenCalledWith('https://example.com/spec.yaml');
-        });
 
-        it('should handle fetch error from URL', async () => {
-            const el = document.createElement('cdd-api-docs') as any;
-            document.body.appendChild(el);
-
+            // 404 error
             global.fetch = vi.fn().mockResolvedValue({
                 ok: false,
                 status: 404,
                 statusText: 'Not Found',
             });
-
             await el.renderSpec('example.com/spec.yaml');
-            expect(el.innerHTML).toContain('404 Not Found: The specified organization or repository does not exist or has no published schema.');
-            expect(global.fetch).toHaveBeenCalledWith('https://example.com/spec.yaml');
-        });
+            expect(el.innerHTML).toContain(
+                '404 Not Found: The specified organization or repository does not exist or has no published schema.',
+            );
 
-        it('should handle empty spec attribute', () => {
-            const el = document.createElement('cdd-api-docs') as any;
-            el.setAttribute('spec', '');
-            document.body.appendChild(el);
-            expect(el.innerHTML).not.toBeNull();
-        });
+            // 500 error
+            global.fetch = vi.fn().mockResolvedValue({
+                ok: false,
+                status: 500,
+                statusText: 'Internal Server Error',
+            });
+            await el.renderSpec('https://example.com/spec.yaml');
+            expect(el.innerHTML).toContain('Failed to fetch spec from URL: 500 Internal Server Error');
 
-        it('should handle empty spec-content attribute', () => {
-            const el = document.createElement('cdd-api-docs') as any;
-            el.setAttribute('spec-content', '');
-            document.body.appendChild(el);
-            expect(el.innerHTML).not.toBeNull();
+            // Non-Error rejection and Error without stack
+            global.fetch = vi.fn().mockRejectedValue('Plain rejection');
+            await el.renderSpec('https://example.com/spec.yaml');
+            expect(el.innerHTML).toContain('Plain rejection');
+
+            const noStackErr = new Error('No stack');
+            noStackErr.stack = '';
+            global.fetch = vi.fn().mockRejectedValue(noStackErr);
+            await el.renderSpec('https://example.com/spec.yaml');
+            expect(el.innerHTML).toContain('No stack');
         });
 
         it('should handle fallback when generated HTML lacks a body tag', async () => {
-            const el = document.createElement('cdd-api-docs') as any;
-            const originalMatch = String.prototype.match;
-            String.prototype.match = function (reg: any) {
-                if (reg && reg.toString && reg.toString().includes('body')) {
-                    return null;
-                }
-                return originalMatch.call(this, reg);
-            };
+            const el = createApiDocsElement();
+            const genSpy = vi
+                .spyOn(aotGenerator, 'generateAOTHtml')
+                .mockReturnValueOnce('<div>Fallback Test without body tag</div>');
 
             await el.renderSpec(`openapi: 3.0.0
 info:
   title: Fallback Test
-  version: 1.0.0
-paths: {}`);
-            String.prototype.match = originalMatch;
+  version: 1.0.0`);
+            genSpy.mockRestore();
 
-            expect(el.innerHTML).toContain('Fallback Test');
+            expect(el.innerHTML).toContain('Fallback Test without body tag');
         });
 
-        it('should handle dynamic routing from URL when spec is not provided', async () => {
-            const originalPathname = window.location.pathname;
-            const originalSearch = window.location.search;
-            
-            // Mock window.location
+        it('should handle dynamic routing (/u/:org/:repo), version dropdown change, versions.json, and Try It Out proxy URL', async () => {
+            const originalLocation = window.location;
             Object.defineProperty(window, 'location', {
                 value: {
                     pathname: '/u/test-org/test-repo',
                     search: '?v=2.0.0',
-                    href: 'http://localhost/u/test-org/test-repo?v=2.0.0'
+                    href: 'http://localhost/u/test-org/test-repo?v=2.0.0',
                 },
-                writable: true
+                writable: true,
+                configurable: true,
+            });
+            const pushStateSpy = vi.spyOn(window.history, 'pushState').mockImplementation(() => {});
+
+            global.fetch = vi.fn().mockImplementation(async (url: string) => {
+                if (url.endsWith('/versions.json')) {
+                    return {
+                        ok: true,
+                        json: async () => ['1.0.0', '2.0.0'],
+                    };
+                }
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    text: async () =>
+                        `openapi: 3.0.0
+info:
+  title: Dynamic Test
+  version: 2.0.0
+paths:
+  /items:
+    get:
+      responses:
+        '200':
+          description: ok`,
+                };
             });
 
-            const mockResponse = {
-                ok: true,
-                text: vi.fn().mockResolvedValue(`openapi: 3.0.0\ninfo:\n  title: Dynamic Test\n  version: 2.0.0\npaths: {}`),
-            };
-            (global.fetch as Mock).mockResolvedValue(mockResponse);
-
-            const el = document.createElement('cdd-api-docs') as any;
+            const el = createApiDocsElement();
             document.body.appendChild(el);
-            
-            // Wait for connectedCallback to finish async render
-            await new Promise((resolve) => setTimeout(resolve, 50));
+            await new Promise(resolve => setTimeout(resolve, 30));
 
+            expect(el.org).toBe('test-org');
+            expect(el.repo).toBe('test-repo');
             expect(global.fetch).toHaveBeenCalledWith('/cdd-gateway/storage/test-org/test-repo/2.0.0/schema.json');
-            
-            // Since it fetches, we expect it also renders version toggles and SDK download links
             expect(el.innerHTML).toContain('Version:');
             expect(el.innerHTML).toContain('Download SDKs:');
-            expect(el.innerHTML).toContain('/sdk-typescript.tgz');
-            expect(el.innerHTML).toContain('/sdk-python.whl');
-            
-            // Restore window.location
+
+            const versionSelect = getRequiredElement(el, '.cdd-version-select', HTMLSelectElement);
+            expect(versionSelect.value).toBe('2.0.0');
+
+            // Trigger version change
+            versionSelect.value = '1.0.0';
+            versionSelect.dispatchEvent(new Event('change'));
+            await new Promise(resolve => setTimeout(resolve, 30));
+            expect(pushStateSpy).toHaveBeenCalled();
+
+            // Submit Try It Out form inside dynamic org/repo element
+            const tryForm = getRequiredElement(el, '.cdd-try-form', HTMLFormElement);
+            tryForm.dispatchEvent(new Event('submit', { cancelable: true }));
+            await new Promise(resolve => setTimeout(resolve, 20));
+            expect(global.fetch).toHaveBeenCalledWith(
+                '/cdd-gateway/proxy/test-org/test-repo/2.0.0/items',
+                expect.any(Object),
+            );
+
+            // Also test dynamic routing without ?v= param and rejected versions.json
             Object.defineProperty(window, 'location', {
-                value: { pathname: originalPathname, search: originalSearch, href: 'http://localhost' },
-                writable: true
+                value: {
+                    pathname: '/u/org2/repo2',
+                    search: '',
+                    href: 'http://localhost/u/org2/repo2',
+                },
+                writable: true,
+                configurable: true,
+            });
+            global.fetch = vi.fn().mockImplementation(async (url: string) => {
+                if (url.endsWith('/versions.json')) {
+                    throw new Error('no versions');
+                }
+                return {
+                    ok: true,
+                    status: 200,
+                    statusText: 'OK',
+                    text: async () =>
+                        `openapi: 3.0.0
+info:
+  title: Dynamic No Version
+  version: 1.0.0
+paths:
+  /ping:
+    get:
+      responses:
+        '200':
+          description: ok`,
+                };
+            });
+
+            const el2 = createApiDocsElement();
+            document.body.appendChild(el2);
+            await new Promise(resolve => setTimeout(resolve, 30));
+            expect(global.fetch).toHaveBeenCalledWith('/cdd-gateway/storage/org2/repo2/schema.json');
+
+            const tryForm2 = getRequiredElement(el2, '.cdd-try-form', HTMLFormElement);
+            tryForm2.dispatchEvent(new Event('submit', { cancelable: true }));
+            await new Promise(resolve => setTimeout(resolve, 20));
+            expect(global.fetch).toHaveBeenCalledWith('/cdd-gateway/proxy/org2/repo2/ping', expect.any(Object));
+
+            // Non-array versions.json response and array versions.json response without ?v= param
+            let callCount = 0;
+            global.fetch = vi.fn().mockImplementation(async (url: string) => {
+                if (url.endsWith('/versions.json')) {
+                    callCount++;
+                    return {
+                        ok: true,
+                        json: async () => (callCount === 1 ? ['1.0.0'] : { notArray: true }),
+                    };
+                }
+                return {
+                    ok: true,
+                    text: async () => `openapi: 3.0.0
+info:
+  title: T
+  version: 1`,
+                };
+            });
+            const el3 = createApiDocsElement();
+            document.body.appendChild(el3);
+            await new Promise(resolve => setTimeout(resolve, 30));
+
+            const el3b = createApiDocsElement();
+            document.body.appendChild(el3b);
+            await new Promise(resolve => setTimeout(resolve, 30));
+
+            const genSpyNoHeader = vi
+                .spyOn(aotGenerator, 'generateAOTHtml')
+                .mockReturnValueOnce('<body><div>No header element</div></body>');
+            const el4 = createApiDocsElement();
+            document.body.appendChild(el4);
+            await new Promise(resolve => setTimeout(resolve, 30));
+            genSpyNoHeader.mockRestore();
+
+            Object.defineProperty(window, 'location', {
+                value: originalLocation,
+                writable: true,
+                configurable: true,
             });
         });
 
-        it('should register and render a spec attribute', () => {
-            const el = document.createElement('cdd-api-docs') as any;
+        it('should notify parent window on connection and clean up listener on disconnection', () => {
+            const parentPostMessage = vi.fn();
+            Object.defineProperty(window, 'parent', {
+                value: { postMessage: parentPostMessage },
+                configurable: true,
+            });
+            const removeSpy = vi.spyOn(window, 'removeEventListener');
+
+            const el = createApiDocsElement();
+            document.body.appendChild(el);
+            expect(parentPostMessage).toHaveBeenCalledWith({ type: 'DOCS_UI_READY' }, '*');
+
+            el.remove();
+            expect(removeSpy).toHaveBeenCalledWith('message', expect.any(Function));
+        });
+
+        it('should handle postMessage UPDATE_SPEC and SET_THEME accurately', async () => {
+            const el = createApiDocsElement();
             document.body.appendChild(el);
 
-            const yamlStr = `
-openapi: 3.0.0
-info:
-  title: Test API
-  version: 1.0.1
-`;
-            el.setAttribute('spec', yamlStr);
-            expect(el.innerHTML).toContain('Test API');
-        });
-
-        it('should handle attributeChangedCallback edge cases', () => {
-            const el = document.createElement('cdd-api-docs') as any;
-            // We can directly call attributeChangedCallback
-            el.attributeChangedCallback('unknown-attr', 'old', 'new');
-            el.attributeChangedCallback('spec', 'same', 'same');
-            // This shouldn't throw or do anything
-            expect(el.innerHTML).toBe('');
-        });
-
-        it('should notify parent window on connection', () => {
-            const postMessageSpy = vi.spyOn(window.parent, 'postMessage');
-            // Mock window.parent !== window
-            Object.defineProperty(window, 'parent', { value: { postMessage: vi.fn() }, configurable: true });
-            const el = document.createElement('cdd-api-docs') as any;
-            document.body.appendChild(el);
-            expect(window.parent.postMessage).toHaveBeenCalledWith({ type: 'DOCS_UI_READY' }, '*');
-        });
-
-        it('should init global document if no element exists', () => {
-            document.body.innerHTML = '<div class="cdd-layout"></div>';
-            window.dispatchEvent(new Event('DOMContentLoaded'));
-            // initApiDocs should have run
-        });
-
-        it('should handle invalid spec gracefully', () => {
-            const el = document.createElement('cdd-api-docs') as any;
-            document.body.appendChild(el);
-
-            el.setAttribute('spec', 'invalid yaml @@@');
-            expect(el.innerHTML).toContain('Error rendering spec');
-        });
-
-        it('should initialize from innerHTML if layout exists', () => {
-            const el = document.createElement('cdd-api-docs');
-            el.innerHTML = '<div class="cdd-layout"></div>';
-            document.body.appendChild(el);
-            // It won't throw, and will initialize initApiDocs on itself
-            expect(el.innerHTML).toContain('cdd-layout');
-        });
-
-        it('should handle postMessage UPDATE_SPEC', () => {
-            const el = document.createElement('cdd-api-docs') as any;
-            document.body.appendChild(el);
-
-            const yamlStr = `
-openapi: 3.0.0
+            const yamlStr = `openapi: 3.0.0
 info:
   title: PostMessage API
-  version: 1.0.1
-`;
+  version: 1.0.1`;
             window.dispatchEvent(
                 new MessageEvent('message', {
                     data: { type: 'UPDATE_SPEC', payload: yamlStr },
                 }),
             );
-
+            await new Promise(resolve => setTimeout(resolve, 20));
             expect(el.innerHTML).toContain('PostMessage API');
-        });
 
-        it('should handle postMessage SET_THEME', () => {
-            const el = document.createElement('cdd-api-docs') as any;
-            document.body.appendChild(el);
-            el.setAttribute('spec', 'openapi: 3.0.0\\ninfo:\\n  title: Test\\n  version: 1.0.0');
-
+            // SET_THEME when #opt-dark-mode checkbox is rendered
             window.dispatchEvent(
                 new MessageEvent('message', {
                     data: { type: 'SET_THEME', payload: 'dark' },
                 }),
             );
+            const themeInput = el.querySelector<HTMLInputElement>('#opt-dark-mode');
+            expect(themeInput).not.toBeNull();
+            expect(themeInput?.checked).toBe(true);
+            expect(localStorage.getItem('cdd-theme')).toBe('dark');
 
-            const themeInput = el.querySelector('#opt-light-mode') as HTMLInputElement;
-            if (themeInput) {
-                expect(themeInput.checked).toBe(true);
-            } else {
-                expect(localStorage.getItem('cdd-theme')).toBe('dark');
-            }
-
-            // Test when input is missing
+            // SET_THEME when innerHTML is empty
             el.innerHTML = '';
             window.dispatchEvent(
                 new MessageEvent('message', {
@@ -668,142 +835,209 @@ info:
                 }),
             );
             expect(localStorage.getItem('cdd-theme')).toBe('light');
-        });
 
-        it('should ignore invalid messages', () => {
-            const el = document.createElement('cdd-api-docs') as any;
-            document.body.appendChild(el);
-            const originalHTML = el.innerHTML;
-
+            // Ignore invalid messages
+            const beforeHTML = el.innerHTML;
             window.dispatchEvent(new MessageEvent('message', { data: null }));
             window.dispatchEvent(new MessageEvent('message', { data: 'not an object' }));
             window.dispatchEvent(new MessageEvent('message', { data: { type: 'UNKNOWN' } }));
+            expect(el.innerHTML).toBe(beforeHTML);
+        });
 
-            expect(el.innerHTML).toBe(originalHTML);
+        it('should handle DOMContentLoaded standalone initialization and registerWebComponent', () => {
+            registerWebComponent();
+            document.body.innerHTML =
+                '<div class="cdd-layout"><div class="cdd-sidebar-title">Paths</div><span></span></div>';
+            window.dispatchEvent(new Event('DOMContentLoaded'));
+            expect(document.querySelector('.cdd-search-input')).not.toBeNull();
+
+            document.body.innerHTML = '<cdd-api-docs></cdd-api-docs>';
+            window.dispatchEvent(new Event('DOMContentLoaded'));
+            expect(document.querySelector('cdd-api-docs')).not.toBeNull();
+        });
+
+        it('should handle Arazzo workflow Try-It-Out forms, companion Arazzo URLs, UPDATE_ARAZZO, and workflow/webhook sdkExamples', async () => {
+            // 1. Test normalizeSdkExamplesInput via sdkExamples setter for workflows, webhooks, structured code, and array operations
+            const el = createApiDocsElement();
+            el.sdkExamples = { workflows: { singleWf: 'singleWfCode()' } };
+            expect(el.sdkExamples).toHaveLength(1);
+            el.sdkExamples = { webhooks: { singleWh: { post: 'singleWhCode()' } } };
+            expect(el.sdkExamples).toHaveLength(1);
+            el.sdkExamples = [
+                {
+                    language: 'rust',
+                    endpoints: {
+                        '/pets': {
+                            get: { snippet: 'rustPets()' },
+                            post: 0,
+                        },
+                        '/bad': 'not-record',
+                    },
+                    webhooks: {
+                        petHook: {
+                            post: 'rustWebhook()',
+                        },
+                    },
+                    workflows: {
+                        adoptWf: 'rustWf()',
+                        structWf: { snippet: 'rustStructWf()' },
+                        numWf: 0,
+                    },
+                },
+                {
+                    language: 'python',
+                    workflows: {
+                        onlyPyWf: 'pyWf()',
+                    },
+                },
+                {
+                    language: 'go',
+                    filepath: 'docs.json',
+                    content: JSON.stringify([
+                        {
+                            language: 'go',
+                            operations: [
+                                {
+                                    method: 'WORKFLOW',
+                                    path: '/workflows/goWf',
+                                    operationId: 'goWf',
+                                    code: 'goWfCode()',
+                                },
+                                {
+                                    method: 'WORKFLOW',
+                                    path: '/workflows/pathOnlyWf',
+                                    code: { snippet: 'pathOnlyWfCode()' },
+                                },
+                                {
+                                    method: 'WORKFLOW',
+                                    path: '',
+                                    code: 123,
+                                },
+                            ],
+                        },
+                    ]),
+                },
+            ];
+            expect(el.sdkExamples.some(ex => ex.filepath === 'workflow_adoptWf')).toBe(true);
+            expect(el.sdkExamples.some(ex => ex.filepath === 'workflow_structWf')).toBe(true);
+            expect(el.sdkExamples.some(ex => ex.filepath === 'workflow_goWf')).toBe(true);
+            expect(el.sdkExamples.some(ex => ex.filepath === 'workflow_pathOnlyWf')).toBe(true);
+
+            // 2. Test interactive workflow Try-It-Out form submission (success, error, non-Error, and missing response container)
+            document.body.innerHTML = `
+                <article class="cdd-endpoint cdd-workflow">
+                    <div class="cdd-step-card" data-step-id="s1" data-method="GET" data-route="/step1"></div>
+                    <div class="cdd-step-card"></div>
+                    <form id="wf-form-ok" class="cdd-workflow-try-form" data-workflow-id="wf1">
+                        <button type="submit">Run</button>
+                    </form>
+                    <div class="cdd-try-response">
+                        <div class="cdd-try-status"></div>
+                        <pre><code class="cdd-try-body"></code></pre>
+                    </div>
+                </article>
+                <form id="wf-form-detached" class="cdd-workflow-try-form">
+                    <button type="submit">Run</button>
+                </form>
+                <div class="cdd-try-response"></div>
+                <form id="wf-form-no-resp" class="cdd-workflow-try-form"></form>
+            `;
+            initApiDocs(document);
+
+            global.fetch = vi.fn().mockResolvedValue({
+                ok: true,
+                status: 200,
+                text: async () => '{"step":"done"}',
+            });
+
+            const wfFormOk = getRequiredElement(document, '#wf-form-ok', HTMLFormElement);
+            wfFormOk.dispatchEvent(new Event('submit', { cancelable: true }));
+            await new Promise(r => setTimeout(r, 20));
+            expect(document.querySelector('.cdd-try-status')?.textContent).toContain('wf1 (2 steps completed)');
+
+            const wfFormDetached = getRequiredElement(document, '#wf-form-detached', HTMLFormElement);
+            wfFormDetached.dispatchEvent(new Event('submit', { cancelable: true }));
+            await new Promise(r => setTimeout(r, 20));
+
+            const wfFormNoResp = getRequiredElement(document, '#wf-form-no-resp', HTMLFormElement);
+            wfFormNoResp.dispatchEvent(new Event('submit', { cancelable: true }));
+
+            global.fetch = vi.fn().mockRejectedValueOnce(new Error('WF Network Error'));
+            wfFormOk.dispatchEvent(new Event('submit', { cancelable: true }));
+            await new Promise(r => setTimeout(r, 20));
+            expect(document.querySelector('.cdd-try-body')?.textContent).toBe('WF Network Error');
+
+            global.fetch = vi.fn().mockRejectedValueOnce('WF String Error');
+            wfFormOk.dispatchEvent(new Event('submit', { cancelable: true }));
+            await new Promise(r => setTimeout(r, 20));
+            expect(document.querySelector('.cdd-try-body')?.textContent).toBe('WF String Error');
+
+            // Test error on form with empty .cdd-try-response (no statusEl or bodyEl) via a failing step
+            document.body.innerHTML = `
+                <article class="cdd-endpoint cdd-workflow">
+                    <div class="cdd-step-card" data-step-id="s1" data-method="GET" data-route="/step1"></div>
+                    <form id="wf-form-empty-resp" class="cdd-workflow-try-form">
+                        <button type="submit">Run</button>
+                    </form>
+                    <div class="cdd-try-response"></div>
+                </article>
+            `;
+            initApiDocs(document);
+            global.fetch = vi.fn().mockRejectedValueOnce(new Error('Empty Resp Error'));
+            const wfFormEmptyResp = getRequiredElement(document, '#wf-form-empty-resp', HTMLFormElement);
+            wfFormEmptyResp.dispatchEvent(new Event('submit', { cancelable: true }));
+            await new Promise(r => setTimeout(r, 20));
+
+            // 3. Test companion Arazzo URL fetching (ok and non-ok) and UPDATE_ARAZZO postMessage
+            global.fetch = vi.fn().mockImplementation(async (url: string) => {
+                if (url.includes('fail-arazzo')) {
+                    return { ok: false, status: 500, statusText: 'Err' };
+                }
+                return {
+                    ok: true,
+                    text: async () =>
+                        JSON.stringify({
+                            arazzo: '1.1.0',
+                            info: { title: 'Remote Arazzo', version: '1.0.0' },
+                            sourceDescriptions: [{ name: 'api', url: './openapi.json' }],
+                            workflows: [{ workflowId: 'remoteWf', steps: [{ stepId: 'rs1' }] }],
+                        }),
+                };
+            });
+
+            const elComp = createApiDocsElement();
+            elComp.setAttribute(
+                'spec-content',
+                JSON.stringify({
+                    openapi: '3.2.0',
+                    info: { title: 'Primary OpenAPI', version: '1.0.0' },
+                    paths: {},
+                }),
+            );
+            elComp.setAttribute('arazzo', 'example.com/arazzo.json');
+            document.body.appendChild(elComp);
+            await new Promise(r => setTimeout(r, 30));
+            expect(elComp.innerHTML).toContain('remoteWf');
+
+            elComp.setAttribute('arazzo', 'https://example.com/fail-arazzo.json');
+            await new Promise(r => setTimeout(r, 30));
+            expect(elComp.innerHTML).toContain('Primary OpenAPI');
+
+            window.dispatchEvent(
+                new MessageEvent('message', {
+                    data: {
+                        type: 'UPDATE_ARAZZO',
+                        payload: JSON.stringify({
+                            arazzo: '1.1.0',
+                            info: { title: 'PostMessage Arazzo', version: '1.0.0' },
+                            sourceDescriptions: [],
+                            workflows: [{ workflowId: 'pmWf', steps: [{ stepId: 'pms1' }] }],
+                        }),
+                    },
+                }),
+            );
+            await new Promise(r => setTimeout(r, 30));
+            expect(elComp.innerHTML).toContain('pmWf');
         });
     });
 });
-
-
-it("should cover setting empty array to sdkExamples", async () => { const el = document.createElement("cdd-api-docs") as any; el.sdkExamples = null; await el.updateComplete; expect(el.sdkExamples).toEqual([]); });
-
-it("should handle empty copy", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<div class="parent"><button class="cdd-copy-btn"></button></div>`; el.connectedCallback(); const btn = el.querySelector(".cdd-copy-btn") as any; btn.click(); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle try it without response container", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<form class="cdd-try-form" data-route="/" data-method="get"><button type="submit"></button></form>`; el.connectedCallback(); const form = el.querySelector(".cdd-try-form") as any; form.dispatchEvent(new Event("submit")); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle try it without statusEl and bodyEl", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<form class="cdd-try-form" data-route="/" data-method="get"><button type="submit"></button></form><div class="cdd-try-response"></div>`; el.connectedCallback(); const form = el.querySelector(".cdd-try-form") as any; global.fetch = vi.fn().mockResolvedValue({ status: 200, statusText: "OK", text: () => Promise.resolve("{}") }); form.dispatchEvent(new Event("submit")); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle empty renderSpec", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el.renderSpec(""); });
-
-it("should handle html without style tag", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el.renderSpec("openapi: 3.2.0\ninfo:\n  title: a\n");  await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle attr change", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el.setAttribute("theme", "dark"); });
-
-it("should test auto-register branch", () => { });
-
-it("should test auto-register branch window", async () => { const ev = new Event("DOMContentLoaded"); window.dispatchEvent(ev); });
-
-it("should test auto-register branch window no el", async () => { document.body.innerHTML = ""; const ev = new Event("DOMContentLoaded"); window.dispatchEvent(ev); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle postMessage with payload light no opt", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el.connectedCallback(); window.dispatchEvent(new MessageEvent("message", { data: { type: "SET_THEME", payload: "light" } })); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle html without body tag", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el.renderSpec("openapi: 3.2.0\ninfo:\n  title: a\n");  await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle empty search textcontent", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<input type="text" class="cdd-search-input" /><a href="" class="cdd-toc-item"></a><article class="cdd-endpoint"></article>`; el.connectedCallback(); const input = el.querySelector(".cdd-search-input") as any; input.value = "x"; input.dispatchEvent(new Event("input")); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle copy without codeEl", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<div class="parent"><button class="cdd-copy-btn"></button><span>test</span></div>`; el.connectedCallback(); const btn = el.querySelector(".cdd-copy-btn") as any; btn.click(); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle try it without matching response container class", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<form class="cdd-try-form" data-route="/" data-method="get"><button type="submit"></button></form><div></div>`; el.connectedCallback(); const form = el.querySelector(".cdd-try-form") as any; global.fetch = vi.fn().mockResolvedValue({ status: 200, statusText: "OK", text: () => Promise.resolve("{}") }); form.dispatchEvent(new Event("submit")); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle try it without statusEl and with bodyEl JSON parse error", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<form class="cdd-try-form" data-route="/" data-method="get"><button type="submit"></button></form><div class="cdd-try-response"><div class="cdd-try-body"></div></div>`; el.connectedCallback(); const form = el.querySelector(".cdd-try-form") as any; global.fetch = vi.fn().mockResolvedValue({ status: 200, statusText: "OK", text: () => Promise.resolve("not json") }); form.dispatchEvent(new Event("submit")); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle empty search element properties", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<input type="text" class="cdd-search-input" /><a class="cdd-toc-item"></a><article class="cdd-endpoint"></article>`; el.connectedCallback(); const input = el.querySelector(".cdd-search-input") as any; input.value = "x"; input.dispatchEvent(new Event("input")); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle empty search element properties empty items", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<input type="text" class="cdd-search-input" />`; el.connectedCallback(); const input = el.querySelector(".cdd-search-input") as any; input.value = "x"; input.dispatchEvent(new Event("input")); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle empty parent element in copy", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<button class="cdd-copy-btn"></button>`; el.connectedCallback(); const btn = el.querySelector(".cdd-copy-btn") as any; Object.defineProperty(btn, "parentElement", {value: null}); btn.click(); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle empty search element text properties", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<input type="text" class="cdd-search-input" /><a class="cdd-toc-item"></a><article class="cdd-endpoint"></article>`; el.connectedCallback(); const item = el.querySelector(".cdd-toc-item") as any; Object.defineProperty(item, "textContent", {value: null}); const endpoint = el.querySelector(".cdd-endpoint") as any; Object.defineProperty(endpoint, "textContent", {value: null}); const input = el.querySelector(".cdd-search-input") as any; input.value = "x"; input.dispatchEvent(new Event("input")); await new Promise(r => setTimeout(r, 0)); });
-
-it("should cover setting reference to parseSchema missing properties 12", async () => { const ev = new Event("DOMContentLoaded"); window.dispatchEvent(ev); });
-
-it("should cover setting reference to parseSchema missing properties 13", async () => { document.body.innerHTML = ""; const ev = new Event("DOMContentLoaded"); window.dispatchEvent(ev); });
-
-it("should handle copy without codeEl missing", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<button class="cdd-copy-btn"></button>`; el.connectedCallback(); const btn = el.querySelector(".cdd-copy-btn") as any; btn.click(); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle attributeChangedCallback same values", async () => { const el = document.createElement("cdd-api-docs") as any; el.attributeChangedCallback("theme", "dark", "dark"); });
-
-it("should handle empty lang proxy", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<input type="radio" name="ui-lang-proxy" id="proxy-js">`; el.connectedCallback(); const proxy = el.querySelector('input') as any; proxy.dispatchEvent(new Event("change")); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle empty imports proxy", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<input data-onchange-proxy="opt-imports" id="proxy-js">`; el.connectedCallback(); const proxy = el.querySelector('input') as any; proxy.dispatchEvent(new Event("change")); await new Promise(r => setTimeout(r, 0)); });
-
-it("should handle empty wrapping proxy", async () => { document.body.innerHTML = `<cdd-api-docs></cdd-api-docs>`; const el = document.querySelector("cdd-api-docs") as any; el._isAOT = true; el.innerHTML = `<input data-onchange-proxy="opt-wrapping" id="proxy-js">`; el.connectedCallback(); const proxy = el.querySelector('input') as any; proxy.dispatchEvent(new Event("change")); await new Promise(r => setTimeout(r, 0)); });
-
-    it('should securely parse docs.json schemas, catch bad json, and correctly unroll valid endpoints', async () => {
-        const el = document.createElement('cdd-api-docs') as any;
-        el.sdkExamples = [
-            // Malformed JSON (should be caught securely)
-            { language: 'python', filepath: 'docs.json', content: '{\endpoints\: bad}' },
-            // Valid JSON
-            {
-                language: 'rust',
-                filepath: 'docs.json',
-                content: JSON.stringify({
-                    endpoints: {
-                        '/test': {
-                            'get': 'client.get_test()',
-                            'post': 'client.post_test()'
-                        }
-                    }
-                })
-            }
-        ];
-        
-        const examples = el.sdkExamples;
-        expect(examples.length).toBe(3);
-        
-        // Find GET test
-        const getEx = examples.find((e: any) => e.filepath === '_test_get');
-        expect(getEx).toBeDefined();
-        expect(getEx.language).toBe('rust');
-        expect(getEx.content).toBe('client.get_test()');
-        
-        // Find POST test
-        const postEx = examples.find((e: any) => e.filepath === '_test_post');
-        expect(postEx).toBeDefined();
-        expect(postEx.language).toBe('rust');
-        expect(postEx.content).toBe('client.post_test()');
-    });
-
-    it('should map CDDOutput to CodeExample array when passed to sdkExamples', async () => {
-        const el = document.createElement('cdd-api-docs') as any;
-        el.sdkExamples = {
-            endpoints: {
-                '/test': {
-                    get: 'test code',
-                }
-            }
-        };
-        expect(el.sdkExamples).toHaveLength(1);
-        expect(el.sdkExamples[0].language).toBe('typescript');
-        expect(el.sdkExamples[0].filepath).toBe('_test_get');
-        expect(el.sdkExamples[0].content).toBe('test code');
-        
-        el.sdkExamples = '[{"endpoints":{"/test2":{"post":"test code 2"}}}]';
-        expect(el.sdkExamples).toHaveLength(1);
-        expect(el.sdkExamples[0].filepath).toBe('_test2_post');
-
-        // Test passing CodeExample wrapping JSON
-        el.sdkExamples = [{
-            language: 'python',
-            filepath: 'docs.json',
-            content: '{"endpoints":{"/test3":{"put":"test python code"}}}'
-        }];
-        expect(el.sdkExamples).toHaveLength(1);
-        expect(el.sdkExamples[0].language).toBe('python');
-        expect(el.sdkExamples[0].filepath).toBe('_test3_put');
-        expect(el.sdkExamples[0].content).toBe('test python code');
-        
-        el.sdkExamples = 'invalid json';
-        expect(el.sdkExamples).toHaveLength(0);
-    });

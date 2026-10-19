@@ -31,16 +31,49 @@ Every function, conditional branch, error catch block, and module execution path
 
 ## Dependencies
 
-- The project limits its runtime dependencies to essential libraries (`commander`, `lit`, `marked`, `fs-extra`) to minimize surface area for vulnerabilities. It eschews heavier template engines like `ejs` in favor of TypeScript string literals.
+- The project limits its runtime dependencies to essential libraries (`express`, `js-yaml`, `marked`) to minimize surface area for vulnerabilities. It eschews heavier template engines like `ejs` and UI frameworks like `lit` in favor of TypeScript string literals and native Custom Elements (`HTMLElement`).
 
 ## Security Practices
 
 - **No Sensitive Data Logged:** No secrets, API keys, or sensitive credentials are ever logged to the console or written to generated output files.
-- **Graceful Error Handling:** Process execution errors (like an unavailable external CDD tool) are caught gracefully, logging a warning rather than crashing the generation process, and substituting mock code to ensure the UI remains testable.
-- **Child Process Execution:** The `runner.ts` module uses `child_process.exec` securely, strictly passing predefined commands combined with file paths. No unvalidated user input is passed directly to the shell executor.
+- **XSS Sanitization:** All user-supplied or spec-supplied strings (`info.title`, `op.summary`, `route`, `curl`, and SDK code snippets) are HTML-escaped via `escapeHtml` prior to DOM/HTML interpolation.
+- **Graceful Error Handling:** Process execution errors (like an unavailable external CDD tool) are caught gracefully, substituting mock code to ensure the UI remains testable.
+- **Child Process Execution:** The `runner.ts` module uses `child_process.execFile` securely, strictly passing argument arrays rather than invoking a shell. No unvalidated user input is passed to a shell executor.
 
 ## Frontend (Generated Site & Web Component)
 
-- **Lit & Vanilla JS:** The Client-Side SPA relies on `lit` and vanilla DOM APIs to guarantee long-term maintainability.
+- **Native Custom Elements & Vanilla JS:** The Client-Side SPA relies on native `HTMLElement` Web Components and vanilla DOM APIs to guarantee zero-framework overhead and long-term maintainability.
 - **Progressive Enhancement:** The AOT generated site must be fully usable with JavaScript disabled. All interactive elements have native HTML fallback behaviors.
 - **CSS Architecture:** Uses Vanilla CSS with CSS Variables (`:root`) themed around Material Design 3 guidelines for consistency and responsiveness. No heavy CSS frameworks (like Tailwind or Bootstrap) are used.
+
+## Current Specification Status
+
+- **OpenAPI 3.0.x & 3.1.x**: Fully supported.
+- **Swagger 2.0 and OpenAPI 3.2.0**: Fully supported (`$self`, `query` HTTP method, `additionalOperations`, `webhooks`, `itemSchema`, `prefixEncoding`, `itemEncoding`, `oauth2MetadataUrl`, `deviceAuthorization`, `summary` on tags/operations/info).
+- **Arazzo 1.1.0**: Supported for workflow specification parsing, step dependency DAG visualization, runtime expression rendering, interactive multi-step workflow execution, and 13-language SDK workflow snippet rendering (`conformance/arazzo-1.1.0/`).
+
+## Support Matrix
+
+| Specification Concept                                      | Status |
+| ---------------------------------------------------------- | ------ |
+| Info Object (`title`, `summary`, `description`, `version`) | ✅     |
+| Server Object & Variable Templating                        | ✅     |
+| Components Object (`schemas`, `parameters`, `responses`)   | ✅     |
+| Paths Object & Path Item Object                            | ✅     |
+| Operation Object (`QUERY`, `additionalOperations`)         | ✅     |
+| Parameter Object (`path`, `query`, `querystring`, `header`, `cookie`) | ✅ |
+| Request Body Object & Media Types (`itemSchema`)           | ✅     |
+| Responses Object & Status Code Ranges                      | ✅     |
+| Schema Object (JSON Schema 2020-12 & Polymorphism)         | ✅     |
+| Reference Object (`$ref`, `summary`, `description`)        | ✅     |
+| OAuth Flows (`deviceAuthorization`, `oauth2MetadataUrl`)   | ✅     |
+| Security Scheme & Security Requirement Objects             | ✅     |
+| Links & Callbacks                                          | ✅     |
+| Webhooks                                                   | ✅     |
+| Arazzo 1.1.0 Source Descriptions (`openapi`, `asyncapi`, `arazzo`) | ✅ |
+| Arazzo 1.1.0 Workflows (`dependsOn`, `inputs`, `outputs`)  | ✅     |
+| Arazzo 1.1.0 Steps (`operationId`, `operationPath`, `channelPath`, `workflowId`) | ✅ |
+| Arazzo 1.1.0 Criteria, Selectors & Payload Replacements    | ✅     |
+| Arazzo 1.1.0 Success & Failure Actions (`end`, `goto`, `retry`) | ✅ |
+| Arazzo 1.1.0 Reusable Components & Runtime Expressions     | ✅     |
+

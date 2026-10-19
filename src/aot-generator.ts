@@ -1,38 +1,73 @@
+/**
+ * Ahead-Of-Time (AOT) Static HTML and CSS Generator for OpenAPI 3.2.0, Swagger 2.0, and Arazzo 1.1.0 Documentation.
+ * @module aot-generator
+ */
+
 import { marked } from 'marked';
 import {
     CodeExample,
     SchemaObject,
     ReferenceObject,
     OperationObject,
+    DocData,
     DocTranslations,
     defaultTranslations,
+    NormalizedWorkflow,
+    SelectorObject,
+    CriterionObject,
+    ArazzoComponentsObject,
 } from './types';
-import { normalizeSpec, mapSdkExamples, isReference } from './parser';
+import { normalizeSpec, mapSdkExamples, isReference, getPathOperations } from './parser';
+import { isSelectorObject } from './arazzo-parser';
+
+/**
+ * Escapes HTML special characters (`&`, `<`, `>`, `"`, `'`) to prevent XSS and broken markup.
+ * @param str The raw string to escape.
+ * @returns The HTML-escaped string.
+ */
+export function escapeHtml(str: string): string {
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
 
 /**
  * Basic markdown rendering for descriptions.
+ * @param text The raw markdown string to convert to HTML.
+ * @returns The rendered HTML string, or an empty string if undefined/empty.
  */
 export function renderMarkdown(text: string | undefined): string {
     if (!text) return '';
-    return marked.parse(text) as string;
+    return marked.parse(text, { async: false });
 }
 
 /**
  * Generates a curl command for a given operation.
- * @param method The HTTP method (get, post, etc.)
- * @param route The API route path
- * @param op The OpenAPI operation object
- * @returns A string containing the curl command
+ * @param method The HTTP method (`get`, `post`, etc.).
+ * @param route The API route path.
+ * @param op The OpenAPI operation object.
+ * @param baseUrl The base server URL (defaults to `'https://api.example.com'`).
+ * @returns A string containing the curl command.
  */
-export function generateCurl(method: string, route: string, op: OperationObject): string {
+export function generateCurl(
+    method: string,
+    route: string,
+    op: OperationObject,
+    baseUrl: string = 'https://api.example.com',
+): string {
     const upperMethod = method.toUpperCase();
     const methodPart = upperMethod === 'GET' ? '' : `-X ${upperMethod} `;
-    let curl = `curl ${methodPart}"https://api.example.com${route}"`;
+    const normalizedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
+    let curl = `curl ${methodPart}"${normalizedBase}${route}"`;
 
+    const cont = ' ' + String.fromCharCode(92) + String.fromCharCode(10) + '  ';
     if (op.parameters) {
         op.parameters.forEach(p => {
             if (!isReference(p) && p.in === 'header') {
-                curl += ` \\\n  -H "${p.name}: <value>"`;
+                curl += `${cont}-H "${p.name}: <value>"`;
             }
         });
     }
@@ -41,8 +76,8 @@ export function generateCurl(method: string, route: string, op: OperationObject)
         const content = op.requestBody.content;
         const firstType = Object.keys(content)[0];
         if (firstType) {
-            curl += ` \\\n  -H "Content-Type: ${firstType}"`;
-            curl += ` \\\n  -d '{"key": "value"}'`;
+            curl += `${cont}-H "Content-Type: ${firstType}"`;
+            curl += `${cont}-d '{"key": "value"}'`;
         }
     }
 
@@ -50,11 +85,17 @@ export function generateCurl(method: string, route: string, op: OperationObject)
 }
 
 /**
+ * Maximum recursion depth when rendering nested schemas.
+ */
+const MAX_SCHEMA_DEPTH = 10;
+
+/**
  * Recursively renders a schema object into an HTML table-like structure.
- * @param schema The SchemaObject or ReferenceObject to render
- * @param depth Current recursion depth
- * @param namePrefix Prefix for property IDs to ensure uniqueness
- * @returns HTML string for the schema
+ * @param schema The SchemaObject or ReferenceObject to render.
+ * @param depth Current recursion depth.
+ * @param namePrefix Prefix for property IDs to ensure uniqueness.
+ * @param t Localization strings for table headers and labels.
+ * @returns HTML string for the schema.
  */
 export function renderSchema(
     schema: SchemaObject | ReferenceObject,
@@ -62,36 +103,52 @@ export function renderSchema(
     namePrefix: string = '',
     t: DocTranslations = defaultTranslations,
 ): string {
+    if (depth > MAX_SCHEMA_DEPTH) {
+        return `<span class="cdd-prop-type">object</span>`;
+    }
+
     if (isReference(schema)) {
-        return `<span class="cdd-schema-ref">${schema.$ref.split('/').pop()}</span>`;
+        const refName = schema.$ref.split('/').pop() || schema.$ref;
+        return `<span class="cdd-schema-ref">${escapeHtml(refName)}</span>`;
     }
 
     let html = `<div class="cdd-schema-container" style="margin-left: ${depth * 16}px">`;
 
     if (schema.type === 'object' && schema.properties) {
         html += `<table class="cdd-schema-table">
-      <thead><tr><th>Property</th><th>Type</th><th>Description</th></tr></thead>
+      <thead><tr><th>${escapeHtml(t.tableHeaderProperty)}</th><th>${escapeHtml(t.tableHeaderType)}</th><th>${escapeHtml(t.tableHeaderDescription)}</th></tr></thead>
       <tbody>`;
         for (const [name, prop] of Object.entries(schema.properties)) {
-            const propSchema = prop as SchemaObject;
-            const isRequired = schema.required?.includes(name);
-             /* v8 ignore next */ const propId = namePrefix ? `${namePrefix}-prop-${name}` : `prop-${name}`;
+            const isRequired = schema.required?.includes(name) ?? false;
+            const propId = namePrefix ? `${namePrefix}-prop-${name}` : `prop-${name}`;
 
-            html += `<tr id="${propId}" class="cdd-deep-link-row">
-        <td><a href="#${propId}" class="cdd-anchor">#</a><span class="cdd-prop-name">${name}${isRequired ? '<span class="cdd-required">*</span>' : ''}</span></td>
-        <td><span class="cdd-prop-type">${propSchema.type || 'any'}</span></td>
-        <td><div class="cdd-prop-desc">${renderMarkdown(propSchema.description)}</div></td>
+            if (isReference(prop)) {
+                const refName = prop.$ref.split('/').pop() || prop.$ref;
+                html += `<tr id="${escapeHtml(propId)}" class="cdd-deep-link-row">
+        <td><a href="#${escapeHtml(propId)}" class="cdd-anchor">#</a><span class="cdd-prop-name">${escapeHtml(name)}${isRequired ? '<span class="cdd-required">*</span>' : ''}</span></td>
+        <td><span class="cdd-schema-ref">${escapeHtml(refName)}</span></td>
+        <td><div class="cdd-prop-desc">${renderMarkdown(prop.description)}</div></td>
       </tr>`;
-            if (propSchema.type === 'object' || propSchema.type === 'array') {
-                html += `<tr><td colspan="3">${renderSchema(propSchema, depth + 1, propId, t)}</td></tr>`;
+            } else {
+                const propType = prop.type || 'any';
+                html += `<tr id="${escapeHtml(propId)}" class="cdd-deep-link-row">
+        <td><a href="#${escapeHtml(propId)}" class="cdd-anchor">#</a><span class="cdd-prop-name">${escapeHtml(name)}${isRequired ? '<span class="cdd-required">*</span>' : ''}</span></td>
+        <td><span class="cdd-prop-type">${escapeHtml(propType)}</span></td>
+        <td><div class="cdd-prop-desc">${renderMarkdown(prop.description)}</div></td>
+      </tr>`;
+                if (prop.type === 'object' || prop.type === 'array') {
+                    html += `<tr><td colspan="3">${renderSchema(prop, depth + 1, propId, t)}</td></tr>`;
+                }
             }
         }
         html += `</tbody></table>`;
     } else if (schema.type === 'array' && schema.items) {
-        html += `<div class="cdd-schema-array">${t.arrayOf} ${renderSchema(schema.items, depth + 1, namePrefix, t)}</div>`;
+        html += `<div class="cdd-schema-array">${escapeHtml(t.arrayOf)} ${renderSchema(schema.items, depth + 1, namePrefix, t)}</div>`;
     } else {
-        html += `<span class="cdd-prop-type">${schema.type || 'any'}</span>`;
-        if (schema.description) html += `<div class="cdd-prop-desc">${renderMarkdown(schema.description)}</div>`;
+        html += `<span class="cdd-prop-type">${escapeHtml(schema.type || 'any')}</span>`;
+        if (schema.description) {
+            html += `<div class="cdd-prop-desc">${renderMarkdown(schema.description)}</div>`;
+        }
     }
 
     html += `</div>`;
@@ -99,11 +156,476 @@ export function renderSchema(
 }
 
 /**
- * Generates the complete AOT HTML for the API documentation.
- * @param specContent Raw OpenAPI spec string (YAML/JSON)
- * @param sdkExamples List of code examples to include
- * @param theme UI theme ('light' or 'dark')
- * @returns Full HTML document string
+ * Formats an Arazzo parameter, replacement, or output value (literal, runtime expression, or `SelectorObject`) as HTML.
+ * @param val The value or `SelectorObject` to format.
+ * @returns Escaped HTML representation of the value.
+ */
+export function renderArazzoValue(val: unknown): string {
+    if (isSelectorObject(val)) {
+        const selType =
+            typeof val.type === 'object' && val.type !== null
+                ? `${val.type.type} (${val.type.version})`
+                : val.type || 'jsonpointer';
+        return `<code class="cdd-expr-badge">${escapeHtml(val.context)}</code> &rarr; <code>${escapeHtml(val.selector)}</code> <span class="cdd-badge cdd-badge-meta">${escapeHtml(selType)}</span>`;
+    }
+    if (typeof val === 'string') {
+        return `<code>${escapeHtml(val)}</code>`;
+    }
+    return `<code>${escapeHtml(JSON.stringify(val))}</code>`;
+}
+
+/**
+ * Formats a `CriterionObject`'s type (string or `CriterionExpressionTypeObject`) into a badge string.
+ * @param crit The `CriterionObject` to inspect.
+ * @returns The formatted criterion type string.
+ */
+export function formatCriterionType(crit: CriterionObject): string {
+    if (!crit.type) return 'simple';
+    if (typeof crit.type === 'string') return crit.type;
+    return `${crit.type.type} (${crit.type.version})`;
+}
+
+/**
+ * Renders the right-hand multi-language code tab panel for either an OpenAPI operation or an Arazzo workflow.
+ * @param id Unique identifier for the card (`operationId` or `workflow-${workflowId}`).
+ * @param curlOrCliPreview The cURL command or workflow CLI preview script.
+ * @param examples The list of `CodeExample` items mapped to this operation or workflow.
+ * @param languages The list of active target languages.
+ * @param t Localization strings.
+ * @returns HTML string for the `<aside class="cdd-endpoint-code">` block.
+ */
+export function renderCodeAside(
+    id: string,
+    curlOrCliPreview: string,
+    examples: CodeExample[],
+    languages: string[],
+    t: DocTranslations,
+): string {
+    return `
+          <aside class="cdd-endpoint-code">
+            <div class="cdd-code-card">
+              <div class="cdd-code-tabs">
+                <input type="radio" id="tab-curl-${escapeHtml(id)}" name="tab-${escapeHtml(id)}" class="cdd-tab-input" checked>
+                <label for="tab-curl-${escapeHtml(id)}" class="cdd-tab-label">${escapeHtml(t.tabCurl)}</label>
+                
+                <input type="radio" id="tab-sdk-${escapeHtml(id)}" name="tab-${escapeHtml(id)}" class="cdd-tab-input">
+                <label for="tab-sdk-${escapeHtml(id)}" class="cdd-tab-label">${escapeHtml(t.tabSdk)}</label>
+
+                <div class="cdd-tab-content cdd-tab-content-curl">
+                  <div style="position: relative;">
+                    <button class="cdd-copy-btn">${escapeHtml(t.copy)}</button>
+                    <pre><code class="language-bash">${escapeHtml(curlOrCliPreview)}</code></pre>
+                  </div>
+                </div>
+                <div class="cdd-tab-content cdd-tab-content-sdk">
+                  ${languages
+                      .map(lang => {
+                          const langEx = examples.filter(ex => ex.language === lang);
+                          const prismLang = lang === 'ts' ? 'typescript' : lang === 'sh' ? 'bash' : lang;
+                          return `
+                      <div class="cdd-lang-block cdd-show-if-${escapeHtml(lang)}">
+                        ${
+                            langEx.length > 0
+                                ? langEx
+                                      .map(ex => {
+                                          const importsClass = ex.includeImports
+                                              ? 'cdd-show-if-imports'
+                                              : 'cdd-hide-if-imports';
+                                          const wrappingClass = ex.includeWrapping
+                                              ? 'cdd-show-if-wrapping'
+                                              : 'cdd-hide-if-wrapping';
+                                          return `
+                          <div class="cdd-variant-block ${importsClass} ${wrappingClass}">
+                            <div style="position: relative;">
+                              <button class="cdd-copy-btn">${escapeHtml(t.copy)}</button>
+                              <pre><code class="language-${escapeHtml(prismLang)}">${escapeHtml(ex.content)}</code></pre>
+                            </div>
+                          </div>
+                        `;
+                                      })
+                                      .join('')
+                                : `<div class="cdd-no-example">${escapeHtml(t.noExampleFor)} ${escapeHtml(lang)}</div>`
+                        }
+                      </div>
+                    `;
+                      })
+                      .join('')}
+                </div>
+              </div>
+            </div>
+          </aside>`;
+}
+
+/**
+ * Renders an Arazzo 1.1.0 workflow card including its inputs schema, step pipeline, criteria, actions, outputs, interactive runner, and multi-language SDK code tabs.
+ * @param nw The `NormalizedWorkflow` to render.
+ * @param docData The parent `DocData` structure.
+ * @param languages Active target languages for the SDK code panel.
+ * @param t Localization strings.
+ * @returns HTML string for the `<article class="cdd-endpoint cdd-workflow">` section.
+ */
+export function renderWorkflowSection(
+    nw: NormalizedWorkflow,
+    docData: DocData,
+    languages: string[],
+    t: DocTranslations = defaultTranslations,
+): string {
+    const wf = nw.workflow;
+    const wfDomId = `workflow-${wf.workflowId}`;
+    const examples = docData.workflowCodeExamples?.[wf.workflowId] ?? [];
+
+    const dependsOnHtml =
+        wf.dependsOn && wf.dependsOn.length > 0
+            ? `<div class="cdd-workflow-depends">
+                <strong>${escapeHtml(t.workflowDependsOnHeading)}:</strong>
+                ${wf.dependsOn
+                    .map(dep => {
+                        const cleanDep = dep.includes('.workflows.') ? dep.split('.workflows.')[1]! : dep;
+                        return `<a href="#workflow-${escapeHtml(cleanDep)}" class="cdd-badge cdd-badge-workflow">${escapeHtml(dep)}</a>`;
+                    })
+                    .join(' ')}
+              </div>`
+            : '';
+
+    const inputsHtml = nw.resolvedInputs
+        ? `<h3 class="cdd-section-title">${escapeHtml(t.workflowInputsHeading)}</h3>
+           ${renderSchema(nw.resolvedInputs, 0, `${wfDomId}-input`, t)}`
+        : '';
+
+    const stepsHtml = nw.normalizedSteps
+        .map((ns, idx) => {
+            const st = ns.step;
+            const stepDomId = `step-${wf.workflowId}-${st.stepId}`;
+            let targetBadgeHtml = '';
+
+            if (ns.linkedTarget) {
+                const lt = ns.linkedTarget;
+                if (lt.kind === 'workflow') {
+                    targetBadgeHtml = `<a href="#${escapeHtml(lt.anchorId || '')}" class="cdd-badge cdd-badge-workflow">WORKFLOW: ${escapeHtml(lt.operationId || '')}</a>`;
+                } else if (lt.kind === 'channel') {
+                    const actUpper = (lt.method || 'send').toUpperCase();
+                    targetBadgeHtml = `<span class="cdd-badge cdd-badge-channel">${escapeHtml(actUpper)} ${escapeHtml(lt.route || '')}</span>`;
+                } else {
+                    const mUpper = (lt.method || 'OP').toUpperCase();
+                    const label = lt.route ? `${mUpper} ${lt.route}` : lt.operationId || mUpper;
+                    targetBadgeHtml = lt.anchorId
+                        ? `<a href="#${escapeHtml(lt.anchorId)}" class="cdd-badge cdd-badge-${escapeHtml(lt.method || 'get')} cdd-badge-${escapeHtml(mUpper)}">${escapeHtml(label)}</a>`
+                        : `<span class="cdd-badge cdd-badge-get">${escapeHtml(label)}</span>`;
+                }
+            }
+
+            const metaBadges: string[] = [];
+            if (st.timeout !== undefined) {
+                metaBadges.push(
+                    `<span class="cdd-badge cdd-badge-meta">timeout: ${escapeHtml(String(st.timeout))}ms</span>`,
+                );
+            }
+            if (st.correlationId) {
+                metaBadges.push(
+                    `<span class="cdd-badge cdd-badge-meta">correlationId: ${escapeHtml(st.correlationId)}</span>`,
+                );
+            }
+            if (ns.upstreamStepIds.length > 0) {
+                for (const upId of ns.upstreamStepIds) {
+                    metaBadges.push(
+                        `<a href="#step-${escapeHtml(wf.workflowId)}-${escapeHtml(upId)}" class="cdd-badge cdd-badge-meta">&larr; ${escapeHtml(upId)}</a>`,
+                    );
+                }
+            }
+
+            const paramsTable =
+                ns.mergedParameters.length > 0
+                    ? `<h4 class="cdd-step-subtitle">${escapeHtml(t.stepParametersHeading)}</h4>
+                       <table class="cdd-params-table">
+                         <thead><tr><th>${escapeHtml(t.tableHeaderName)}</th><th>${escapeHtml(t.tableHeaderIn)}</th><th>Value / Expression</th></tr></thead>
+                         <tbody>
+                           ${ns.mergedParameters
+                               .map(
+                                   p => `<tr>
+                                 <td><code>${escapeHtml(p.name)}</code></td>
+                                 <td>${escapeHtml(p.in || 'workflow')}</td>
+                                 <td>${renderArazzoValue(p.value)}</td>
+                               </tr>`,
+                               )
+                               .join('')}
+                         </tbody>
+                       </table>`
+                    : '';
+
+            const requestBodyBlock = st.requestBody
+                ? `<h4 class="cdd-step-subtitle">${escapeHtml(t.stepRequestBodyHeading)}${st.requestBody.contentType ? ` (<code>${escapeHtml(st.requestBody.contentType)}</code>)` : ''}</h4>
+                   ${
+                       st.requestBody.payload !== undefined
+                           ? `<pre class="cdd-payload-pre"><code>${escapeHtml(typeof st.requestBody.payload === 'string' ? st.requestBody.payload : JSON.stringify(st.requestBody.payload, null, 2))}</code></pre>`
+                           : ''
+                   }
+                   ${
+                       st.requestBody.replacements && st.requestBody.replacements.length > 0
+                           ? `<table class="cdd-params-table">
+                                <thead><tr><th>Target Pointer</th><th>Replacement Value</th></tr></thead>
+                                <tbody>
+                                  ${st.requestBody.replacements
+                                      .map(
+                                          rep => `<tr>
+                                        <td><code>${escapeHtml(rep.target)}</code></td>
+                                        <td>${renderArazzoValue(rep.value)}</td>
+                                      </tr>`,
+                                      )
+                                      .join('')}
+                                </tbody>
+                              </table>`
+                           : ''
+                   }`
+                : '';
+
+            const criteriaBlock =
+                st.successCriteria && st.successCriteria.length > 0
+                    ? `<h4 class="cdd-step-subtitle">${escapeHtml(t.successCriteriaHeading)}</h4>
+                       <table class="cdd-params-table">
+                         <thead><tr><th>Context</th><th>Condition</th><th>${escapeHtml(t.tableHeaderType)}</th></tr></thead>
+                         <tbody>
+                           ${st.successCriteria
+                               .map(
+                                   c => `<tr>
+                                 <td><code>${escapeHtml(c.context || '$statusCode')}</code></td>
+                                 <td><code>${escapeHtml(c.condition)}</code></td>
+                                 <td><span class="cdd-badge cdd-badge-meta">${escapeHtml(formatCriterionType(c))}</span></td>
+                               </tr>`,
+                               )
+                               .join('')}
+                         </tbody>
+                       </table>`
+                    : '';
+
+            const onSuccessBlock =
+                ns.resolvedOnSuccess.length > 0
+                    ? `<h4 class="cdd-step-subtitle">${escapeHtml(t.onSuccessHeading)}</h4>
+                       <ul class="cdd-action-list">
+                         ${ns.resolvedOnSuccess
+                             .map(act => {
+                                 const target = act.stepId
+                                     ? ` &rarr; step <code>${escapeHtml(act.stepId)}</code>`
+                                     : act.workflowId
+                                       ? ` &rarr; workflow <code>${escapeHtml(act.workflowId)}</code>`
+                                       : '';
+                                 return `<li><span class="cdd-badge cdd-badge-post">${escapeHtml(act.type.toUpperCase())}</span> <strong>${escapeHtml(act.name)}</strong>${target}</li>`;
+                             })
+                             .join('')}
+                       </ul>`
+                    : '';
+
+            const onFailureBlock =
+                ns.resolvedOnFailure.length > 0
+                    ? `<h4 class="cdd-step-subtitle">${escapeHtml(t.onFailureHeading)}</h4>
+                       <ul class="cdd-action-list">
+                         ${ns.resolvedOnFailure
+                             .map(act => {
+                                 const target = act.stepId
+                                     ? ` &rarr; step <code>${escapeHtml(act.stepId)}</code>`
+                                     : act.workflowId
+                                       ? ` &rarr; workflow <code>${escapeHtml(act.workflowId)}</code>`
+                                       : '';
+                                 const retryMeta =
+                                     act.retryLimit !== undefined || act.retryAfter !== undefined
+                                         ? ` (retryLimit: ${escapeHtml(String(act.retryLimit ?? 1))}, retryAfter: ${escapeHtml(String(act.retryAfter ?? 0))}s)`
+                                         : '';
+                                 return `<li><span class="cdd-badge cdd-badge-delete">${escapeHtml(act.type.toUpperCase())}</span> <strong>${escapeHtml(act.name)}</strong>${target}${retryMeta}</li>`;
+                             })
+                             .join('')}
+                       </ul>`
+                    : '';
+
+            const stepOutputsBlock =
+                st.outputs && Object.keys(st.outputs).length > 0
+                    ? `<h4 class="cdd-step-subtitle">${escapeHtml(t.stepOutputsHeading)}</h4>
+                       <table class="cdd-params-table">
+                         <thead><tr><th>${escapeHtml(t.tableHeaderName)}</th><th>Expression / Selector</th></tr></thead>
+                         <tbody>
+                           ${Object.entries(st.outputs)
+                               .map(
+                                   ([outKey, outVal]) => `<tr>
+                                 <td><code>${escapeHtml(outKey)}</code></td>
+                                 <td>${renderArazzoValue(outVal)}</td>
+                               </tr>`,
+                               )
+                               .join('')}
+                         </tbody>
+                       </table>`
+                    : '';
+
+            return `
+              <div id="${escapeHtml(stepDomId)}" class="cdd-step-card cdd-deep-link-row" data-step-id="${escapeHtml(st.stepId)}" data-method="${escapeHtml((ns.linkedTarget?.method || 'GET').toUpperCase())}" data-route="${escapeHtml(ns.linkedTarget?.route || `/${st.stepId}`)}">
+                <div class="cdd-step-header">
+                  <span class="cdd-step-index">${idx + 1}</span>
+                  <a href="#${escapeHtml(stepDomId)}" class="cdd-anchor">#</a>
+                  <strong class="cdd-step-title">${escapeHtml(st.stepId)}</strong>
+                  ${targetBadgeHtml}
+                  ${metaBadges.join(' ')}
+                </div>
+                ${st.description ? `<div class="cdd-description">${renderMarkdown(st.description)}</div>` : ''}
+                ${paramsTable}
+                ${requestBodyBlock}
+                ${criteriaBlock}
+                ${onSuccessBlock}
+                ${onFailureBlock}
+                ${stepOutputsBlock}
+              </div>`;
+        })
+        .join('');
+
+    const wfOutputsBlock =
+        wf.outputs && Object.keys(wf.outputs).length > 0
+            ? `<h3 class="cdd-section-title">${escapeHtml(t.workflowOutputsHeading)}</h3>
+               <table class="cdd-params-table">
+                 <thead><tr><th>${escapeHtml(t.tableHeaderName)}</th><th>Expression / Selector</th></tr></thead>
+                 <tbody>
+                   ${Object.entries(wf.outputs)
+                       .map(
+                           ([outKey, outVal]: [string, string | SelectorObject]) => `<tr>
+                         <td><code>${escapeHtml(outKey)}</code></td>
+                         <td>${renderArazzoValue(outVal)}</td>
+                       </tr>`,
+                       )
+                       .join('')}
+                 </tbody>
+               </table>`
+            : '';
+
+    return `
+        <article id="${escapeHtml(wfDomId)}" class="cdd-endpoint cdd-workflow">
+          <div class="cdd-endpoint-info">
+            <h2 class="cdd-endpoint-title">${escapeHtml(wf.summary || wf.workflowId)}</h2>
+            <div class="cdd-endpoint-path-row">
+              <span class="cdd-badge cdd-badge-workflow">WORKFLOW</span>
+              <code class="cdd-path-text">${escapeHtml(wf.workflowId)}</code>
+            </div>
+            ${wf.description ? `<div class="cdd-description">${renderMarkdown(wf.description)}</div>` : ''}
+            ${dependsOnHtml}
+            ${inputsHtml}
+
+            <h3 class="cdd-section-title">${escapeHtml(t.stepsHeading)}</h3>
+            <div class="cdd-steps-pipeline">
+              ${stepsHtml}
+            </div>
+
+            ${wfOutputsBlock}
+
+            <details class="cdd-try-it-out">
+              <summary class="cdd-try-summary">${escapeHtml(t.runWorkflowBtn)}</summary>
+              <form class="cdd-workflow-try-form" action="/" method="POST" data-workflow-id="${escapeHtml(wf.workflowId)}">
+                <div class="cdd-try-field">
+                  <label for="try-wf-${escapeHtml(wf.workflowId)}-inputs">${escapeHtml(t.workflowInputsHeading)} (JSON)</label>
+                  <textarea id="try-wf-${escapeHtml(wf.workflowId)}-inputs" name="workflowInputs" rows="3">{}</textarea>
+                </div>
+                <button type="submit" class="cdd-try-btn">${escapeHtml(t.runWorkflowBtn)}</button>
+              </form>
+              <div class="cdd-try-response" style="display: none; margin-top: 1rem;">
+                <h4 style="margin:0 0 0.5rem 0;">${escapeHtml(t.response)}</h4>
+                <div class="cdd-try-status"></div>
+                <pre><code class="cdd-try-body"></code></pre>
+              </div>
+            </details>
+          </div>
+
+          ${renderCodeAside(wfDomId, nw.cliPreview, examples, languages, t)}
+        </article>`;
+}
+
+/**
+ * Renders reusable Arazzo `$components` (`inputs`, `parameters`, `successActions`, `failureActions`) when present.
+ * @param components The `ArazzoComponentsObject` to render.
+ * @param t Localization strings.
+ * @returns HTML string for the Arazzo components section.
+ */
+export function renderArazzoComponents(
+    components: ArazzoComponentsObject | undefined,
+    t: DocTranslations = defaultTranslations,
+): string {
+    if (!components) return '';
+    const inputEntries = Object.entries(components.inputs ?? {});
+    const paramEntries = Object.entries(components.parameters ?? {});
+    const successEntries = Object.entries(components.successActions ?? {});
+    const failureEntries = Object.entries(components.failureActions ?? {});
+
+    if (
+        inputEntries.length === 0 &&
+        paramEntries.length === 0 &&
+        successEntries.length === 0 &&
+        failureEntries.length === 0
+    ) {
+        return '';
+    }
+
+    let html = `<h2 id="section-arazzo-components" class="cdd-main-title">${escapeHtml(t.arazzoComponentsHeading)}</h2>`;
+
+    for (const [name, schema] of inputEntries) {
+        html += `<div id="arazzo-input-${escapeHtml(name)}" class="cdd-schema-section">
+          <h3 class="cdd-schema-title">$components.inputs.${escapeHtml(name)}</h3>
+          ${renderSchema(schema, 0, `arazzo-input-${name}`, t)}
+        </div>`;
+    }
+
+    if (paramEntries.length > 0) {
+        html += `<div class="cdd-schema-section">
+          <h3 class="cdd-schema-title">$components.parameters</h3>
+          <table class="cdd-params-table">
+            <thead><tr><th>Key</th><th>${escapeHtml(t.tableHeaderName)}</th><th>${escapeHtml(t.tableHeaderIn)}</th><th>Default Value</th></tr></thead>
+            <tbody>
+              ${paramEntries
+                  .map(
+                      ([key, p]) => `<tr id="arazzo-param-${escapeHtml(key)}">
+                    <td><code>${escapeHtml(key)}</code></td>
+                    <td><code>${escapeHtml(p.name)}</code></td>
+                    <td>${escapeHtml(p.in || 'workflow')}</td>
+                    <td>${renderArazzoValue(p.value)}</td>
+                  </tr>`,
+                  )
+                  .join('')}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
+    if (successEntries.length > 0) {
+        html += `<div class="cdd-schema-section">
+          <h3 class="cdd-schema-title">$components.successActions</h3>
+          <ul class="cdd-action-list">
+            ${successEntries
+                .map(
+                    ([key, act]) =>
+                        `<li id="arazzo-success-${escapeHtml(key)}"><code>${escapeHtml(key)}</code>: <span class="cdd-badge cdd-badge-post">${escapeHtml(act.type.toUpperCase())}</span> <strong>${escapeHtml(act.name)}</strong></li>`,
+                )
+                .join('')}
+          </ul>
+        </div>`;
+    }
+
+    if (failureEntries.length > 0) {
+        html += `<div class="cdd-schema-section">
+          <h3 class="cdd-schema-title">$components.failureActions</h3>
+          <ul class="cdd-action-list">
+            ${failureEntries
+                .map(
+                    ([key, act]) =>
+                        `<li id="arazzo-failure-${escapeHtml(key)}"><code>${escapeHtml(key)}</code>: <span class="cdd-badge cdd-badge-delete">${escapeHtml(act.type.toUpperCase())}</span> <strong>${escapeHtml(act.name)}</strong></li>`,
+                )
+                .join('')}
+          </ul>
+        </div>`;
+    }
+
+    return html;
+}
+
+/**
+ * Generates the complete AOT HTML for the OpenAPI 3.2.0, Swagger 2.0, and/or Arazzo 1.1.0 documentation.
+ * @param specContent Raw OpenAPI or Arazzo spec string (YAML/JSON).
+ * @param sdkExamples List of code examples to include.
+ * @param theme UI theme (`'light'` or `'dark'`).
+ * @param injectLiveReload Whether to inject the `/__livereload` EventSource script.
+ * @param customTranslations Optional partial translation dictionary to override defaults.
+ * @param companionArazzoContent Optional companion Arazzo 1.1.0 spec string (YAML/JSON) to render alongside an OpenAPI spec.
+ * @returns Full HTML document string.
  */
 export function generateAOTHtml(
     specContent: string,
@@ -111,66 +633,84 @@ export function generateAOTHtml(
     theme: 'light' | 'dark' = 'light',
     injectLiveReload: boolean = false,
     customTranslations: Partial<DocTranslations> = {},
+    companionArazzoContent?: string,
 ): string {
     const t: DocTranslations = { ...defaultTranslations, ...customTranslations };
-    const data = normalizeSpec(specContent);
+    const data = normalizeSpec(specContent, companionArazzoContent);
     if (sdkExamples.length > 0) {
         mapSdkExamples(data, sdkExamples);
     }
 
-    const languages = Array.from(new Set(sdkExamples.map(  ex => ex.language)));
+    const languages = Array.from(new Set(sdkExamples.map(ex => ex.language)));
     if (languages.length === 0) languages.push('javascript');
 
     const spec = data.spec;
+    const baseUrl = spec.servers?.[0]?.url || 'https://api.example.com';
     const paths = spec.paths || {};
     let mainHtml = '';
     let tocHtml = '';
+    let webhooksTocHtml = '';
+    let workflowsTocHtml = '';
     let schemasHtml = '';
 
-    // Build TOC and Main Content
+    // Build Source Descriptions Banner if present
+    const sourceDescriptionsHtml =
+        data.sourceDescriptions && data.sourceDescriptions.length > 0
+            ? `<div class="cdd-source-descriptions">
+                <strong>${escapeHtml(t.sourceDescriptionsHeading)}:</strong>
+                ${data.sourceDescriptions
+                    .map(
+                        sd =>
+                            `<span class="cdd-source-chip"><span class="cdd-badge cdd-badge-meta">${escapeHtml(sd.type || 'openapi')}</span> <strong>${escapeHtml(sd.name)}</strong>: <code>${escapeHtml(sd.url)}</code></span>`,
+                    )
+                    .join(' ')}
+              </div>`
+            : '';
+
+    // Build TOC and Main Content for OpenAPI Paths
     for (const [route, pathItem] of Object.entries(paths)) {
         if (isReference(pathItem)) continue;
-        const methods = ['get', 'post', 'put', 'delete', 'patch'] as const;
+        const operations = getPathOperations(pathItem);
 
         let routeHasOps = false;
-        let routeToc = `<details class="cdd-toc-group"><summary class="cdd-toc-route">${route}</summary>`;
+        let routeToc = `<details class="cdd-toc-group"><summary class="cdd-toc-route">${escapeHtml(route)}</summary>`;
 
-        for (const m of methods) {
-            const op = (pathItem as any)[m] as OperationObject;
-            if (!op) continue;
+        for (const [m, op] of operations) {
             routeHasOps = true;
             const id = op.operationId || `${m}-${route}`;
+            const upperMethod = m.toUpperCase();
 
-            routeToc += `<a href="#${id}" class="cdd-toc-item cdd-method-${m}">${m.toUpperCase()}</a>`;
+            routeToc += `<a href="#${escapeHtml(id)}" class="cdd-toc-item cdd-method-${escapeHtml(m)}">${escapeHtml(upperMethod)}</a>`;
 
-            const curl = generateCurl(m, route, op);
+            const curl = generateCurl(m, route, op, baseUrl);
             const examples = data.codeExamples[id] || [];
 
             mainHtml += `
-        <article id="${id}" class="cdd-endpoint">
+        <article id="${escapeHtml(id)}" class="cdd-endpoint">
           <div class="cdd-endpoint-info">
-            <h2 class="cdd-endpoint-title">${op.summary || route}</h2>
+            <h2 class="cdd-endpoint-title">${escapeHtml(op.summary || route)}</h2>
             <div class="cdd-endpoint-path-row">
-              <span class="cdd-badge cdd-badge-${m}">${m.toUpperCase()}</span>
-              <code class="cdd-path-text">${route}</code>
+              <span class="cdd-badge cdd-badge-${escapeHtml(m)} cdd-badge-${escapeHtml(upperMethod)}">${escapeHtml(upperMethod)}</span>
+              <code class="cdd-path-text">${escapeHtml(route)}</code>
             </div>
             ${op.description ? `<div class="cdd-description">${renderMarkdown(op.description)}</div>` : ''}
             
             ${
                 op.parameters
                     ? `
-              <h3 class="cdd-section-title">${t.parameters}</h3>
+              <h3 class="cdd-section-title">${escapeHtml(t.parameters)}</h3>
               <table class="cdd-params-table">
-                <thead><tr><th>Name</th><th>In</th><th>Type</th><th>Description</th></tr></thead>
+                <thead><tr><th>${escapeHtml(t.tableHeaderName)}</th><th>${escapeHtml(t.tableHeaderIn)}</th><th>${escapeHtml(t.tableHeaderType)}</th><th>${escapeHtml(t.tableHeaderDescription)}</th></tr></thead>
                 <tbody>
                   ${op.parameters
                       .map(p => {
                           if (isReference(p)) return '';
                           const paramId = `${id}-param-${p.name}`;
-                          return `<tr id="${paramId}" class="cdd-deep-link-row">
-                      <td><a href="#${paramId}" class="cdd-anchor">#</a><code>${p.name}${p.required ? '*' : ''}</code></td>
-                      <td>${p.in}</td>
-                      <td>${(p.schema as any)?.type || 'any'}</td>
+                          const paramType = p.schema && !isReference(p.schema) && p.schema.type ? p.schema.type : 'any';
+                          return `<tr id="${escapeHtml(paramId)}" class="cdd-deep-link-row">
+                      <td><a href="#${escapeHtml(paramId)}" class="cdd-anchor">#</a><code>${escapeHtml(p.name)}${p.required ? '*' : ''}</code></td>
+                      <td>${escapeHtml(p.in)}</td>
+                      <td>${escapeHtml(paramType)}</td>
                       <td>${renderMarkdown(p.description)}</td>
                     </tr>`;
                       })
@@ -182,8 +722,8 @@ export function generateAOTHtml(
             }
 
             <details class="cdd-try-it-out">
-              <summary class="cdd-try-summary">${t.tryItOut}</summary>
-              <form class="cdd-try-form" method="${m === 'get' ? 'GET' : 'POST'}" action="${'/'}" data-method="${m.toUpperCase()}" data-route="${route}">
+              <summary class="cdd-try-summary">${escapeHtml(t.tryItOut)}</summary>
+              <form class="cdd-try-form" method="${m === 'get' ? 'GET' : 'POST'}" action="/" data-method="${escapeHtml(upperMethod)}" data-route="${escapeHtml(route)}">
                 ${
                     op.parameters
                         ? op.parameters
@@ -191,8 +731,8 @@ export function generateAOTHtml(
                                   if (isReference(p)) return '';
                                   return `
                     <div class="cdd-try-field">
-                      <label for="try-${id}-${p.name}">${p.name} (${p.in})${p.required ? ' *' : ''}</label>
-                      <input type="text" id="try-${id}-${p.name}" name="${p.name}" data-in="${p.in}" ${p.required ? 'required' : ''}>
+                      <label for="try-${escapeHtml(id)}-${escapeHtml(p.name)}">${escapeHtml(p.name)} (${escapeHtml(p.in)})${p.required ? ' *' : ''}</label>
+                      <input type="text" id="try-${escapeHtml(id)}-${escapeHtml(p.name)}" name="${escapeHtml(p.name)}" data-in="${escapeHtml(p.in)}" ${p.required ? 'required' : ''}>
                     </div>
                   `;
                               })
@@ -203,72 +743,23 @@ export function generateAOTHtml(
                     op.requestBody && !isReference(op.requestBody)
                         ? `
                   <div class="cdd-try-field">
-                    <label for="try-${id}-body">${t.requestBody}</label>
-                    <textarea id="try-${id}-body" name="requestBody" rows="4"></textarea>
+                    <label for="try-${escapeHtml(id)}-body">${escapeHtml(t.requestBody)}</label>
+                    <textarea id="try-${escapeHtml(id)}-body" name="requestBody" rows="4"></textarea>
                   </div>
                 `
                         : ''
                 }
-                <button type="submit" class="cdd-try-btn">${t.execute}</button>
+                <button type="submit" class="cdd-try-btn">${escapeHtml(t.execute)}</button>
               </form>
               <div class="cdd-try-response" style="display: none; margin-top: 1rem;">
-                <h4 style="margin:0 0 0.5rem 0;">${t.response}</h4>
+                <h4 style="margin:0 0 0.5rem 0;">${escapeHtml(t.response)}</h4>
                 <div class="cdd-try-status"></div>
                 <pre><code class="cdd-try-body"></code></pre>
               </div>
             </details>
           </div>
 
-          <aside class="cdd-endpoint-code">
-            <div class="cdd-code-card">
-              <div class="cdd-code-tabs">
-                <input type="radio" id="tab-curl-${id}" name="tab-${id}" class="cdd-tab-input" checked>
-                <label for="tab-curl-${id}" class="cdd-tab-label">cURL</label>
-                
-                <input type="radio" id="tab-sdk-${id}" name="tab-${id}" class="cdd-tab-input">
-                <label for="tab-sdk-${id}" class="cdd-tab-label">SDK</label>
-
-                <div class="cdd-tab-content cdd-tab-content-curl">
-                  <div style="position: relative;">
-                    <button class="cdd-copy-btn">${t.copy}</button>
-                    <pre><code class="language-bash">${curl}</code></pre>
-                  </div>
-                </div>
-                <div class="cdd-tab-content cdd-tab-content-sdk">
-                  ${languages
-                      .map(lang => {
-                          const langEx = examples.filter(ex => ex.language === lang);
-                          const prismLang = lang === 'ts' ? 'typescript' : lang === 'sh' ? 'bash' : lang;
-                          return `
-                      <div class="cdd-lang-block cdd-show-if-${lang}">
-                        ${
-                            langEx.length > 0
-                                ? langEx
-                                      .map(
-                                          ex => {
-                                              /* v8 ignore next */ const importsClass = ex.includeImports ? 'cdd-show-if-imports' : 'cdd-hide-if-imports';
-                                              /* v8 ignore next */ const wrappingClass = ex.includeWrapping ? 'cdd-show-if-wrapping' : 'cdd-hide-if-wrapping';
-                                              return `
-                          <div class="cdd-variant-block ${importsClass} ${wrappingClass}">
-                            <div style="position: relative;">
-                              <button class="cdd-copy-btn">${t.copy}</button>
-                              <pre><code class="language-${prismLang}">${ex.content}</code></pre>
-                            </div>
-                          </div>
-                        `;
-                                          }
-                                      )
-                                      .join('')
-                                : `<div class="cdd-no-example">${t.noExampleFor} ${lang}</div>`
-                        }
-                      </div>
-                    `;
-                      })
-                      .join('')}
-                </div>
-              </div>
-            </div>
-          </aside>
+          ${renderCodeAside(id, curl, examples, languages, t)}
         </article>
       `;
         }
@@ -276,17 +767,70 @@ export function generateAOTHtml(
         if (routeHasOps) tocHtml += routeToc;
     }
 
+    // Build Webhooks TOC and Main Content
+    if (spec.webhooks) {
+        for (const [webhookName, pathItem] of Object.entries(spec.webhooks)) {
+            if (isReference(pathItem)) continue;
+            const operations = getPathOperations(pathItem);
+            for (const [m, op] of operations) {
+                const id = op.operationId || `webhook-${m}-${webhookName}`;
+                const upperMethod = m.toUpperCase();
+                webhooksTocHtml += `<a href="#${escapeHtml(id)}" class="cdd-toc-item">WEBHOOK: ${escapeHtml(webhookName)} (${escapeHtml(upperMethod)})</a>`;
+                const curl = generateCurl(m, `/${webhookName}`, op, baseUrl);
+                const examples = data.codeExamples[id] || [];
+
+                mainHtml += `
+        <article id="${escapeHtml(id)}" class="cdd-endpoint cdd-webhook">
+          <div class="cdd-endpoint-info">
+            <h2 class="cdd-endpoint-title">${escapeHtml(op.summary || webhookName)}</h2>
+            <div class="cdd-endpoint-path-row">
+              <span class="cdd-badge cdd-badge-post">WEBHOOK</span>
+              <span class="cdd-badge cdd-badge-${escapeHtml(m)} cdd-badge-${escapeHtml(upperMethod)}">${escapeHtml(upperMethod)}</span>
+              <code class="cdd-path-text">${escapeHtml(webhookName)}</code>
+            </div>
+            ${op.description ? `<div class="cdd-description">${renderMarkdown(op.description)}</div>` : ''}
+          </div>
+          ${renderCodeAside(id, curl, examples, languages, t)}
+        </article>`;
+            }
+        }
+    }
+
+    // Build Arazzo Workflows TOC and Main Content
+    if (data.workflows && data.workflows.length > 0) {
+        mainHtml += `<h2 id="section-workflows" class="cdd-main-title">${escapeHtml(t.workflowsHeading)}</h2>`;
+        for (const nw of data.workflows) {
+            const wf = nw.workflow;
+            const wfDomId = `workflow-${wf.workflowId}`;
+            workflowsTocHtml += `<details class="cdd-toc-group" open>
+              <summary class="cdd-toc-route"><a href="#${escapeHtml(wfDomId)}" class="cdd-toc-item cdd-toc-workflow-item">WORKFLOW: ${escapeHtml(wf.workflowId)}</a></summary>
+              ${wf.steps
+                  .map(
+                      st =>
+                          `<a href="#step-${escapeHtml(wf.workflowId)}-${escapeHtml(st.stepId)}" class="cdd-toc-item">${escapeHtml(st.stepId)}</a>`,
+                  )
+                  .join('')}
+            </details>`;
+            mainHtml += renderWorkflowSection(nw, data, languages, t);
+        }
+    }
+
     // Build Schemas
     if (spec.components?.schemas) {
-        schemasHtml += `<h2 id="section-schemas" class="cdd-main-title">${t.schemas}</h2>`;
+        schemasHtml += `<h2 id="section-schemas" class="cdd-main-title">${escapeHtml(t.schemas)}</h2>`;
         for (const [name, schema] of Object.entries(spec.components.schemas)) {
             schemasHtml += `
-        <div id="schema-${name}" class="cdd-schema-section">
-          <h3 class="cdd-schema-title">${name}</h3>
-          ${renderSchema(schema, 0, `schema-${name}`)}
+        <div id="schema-${escapeHtml(name)}" class="cdd-schema-section">
+          <h3 class="cdd-schema-title">${escapeHtml(name)}</h3>
+          ${renderSchema(schema, 0, `schema-${name}`, t)}
         </div>
       `;
         }
+    }
+
+    // Build Arazzo Components
+    if (data.arazzoSpec?.components) {
+        schemasHtml += renderArazzoComponents(data.arazzoSpec.components, t);
     }
 
     const lightVars = `
@@ -312,12 +856,12 @@ export function generateAOTHtml(
   `;
 
     return `<!DOCTYPE html>
-<html lang="${t.locale}" class="no-js">
+<html lang="${escapeHtml(t.locale)}" class="no-js">
 <head>
   <script>document.documentElement.classList.remove('no-js');</script>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${spec.info.title} - API Reference</title>
+  <title>${escapeHtml(spec.info.title)} - API Reference</title>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono&display=swap" rel="stylesheet">
   <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
   <style>
@@ -339,6 +883,11 @@ export function generateAOTHtml(
       --cdd-put: #944a00; --cdd-put-bg: #ffdcbe;
       --cdd-delete: #ba1a1a; --cdd-delete-bg: #ffdad6;
       --cdd-patch: #006a6a; --cdd-patch-bg: #6ff5f5;
+      --cdd-options: #5b4300; --cdd-options-bg: #ffdf9a;
+      --cdd-head: #4355b9; --cdd-head-bg: #dee0ff;
+      --cdd-trace: #705573; --cdd-trace-bg: #fad7ff;
+      --cdd-query: #005ac1; --cdd-query-bg: #d8e2ff;
+      --cdd-workflow: #6750a4; --cdd-workflow-bg: #eaddff;
       
       ${languages.map(lang => `--cdd-display-${lang}: none;`).join(' ')}
       --cdd-display-imports: block;
@@ -349,7 +898,7 @@ export function generateAOTHtml(
       ${darkVars}
     }
 
-    ${languages.map(lang => `#lang-opt-${lang}:checked ~ .cdd-layout .cdd-show-if-${lang} { display: block; }`).join('\n')}
+    ${languages.map(lang => `#lang-opt-${lang}:checked ~ .cdd-layout .cdd-show-if-${lang} { display: block; }`).join(String.fromCharCode(10))}
     #opt-imports:checked ~ * { --cdd-display-imports: block; }
     #opt-imports:not(:checked) ~ * { --cdd-display-imports: none; }
     #opt-wrapping:checked ~ * { --cdd-display-wrapping: block; }
@@ -413,9 +962,27 @@ export function generateAOTHtml(
     .cdd-deep-link-row:hover .cdd-anchor { opacity: 1; }
     .cdd-deep-link-row:target { background: rgba(0, 90, 193, 0.1); outline: 2px solid var(--cdd-primary); }
 
-    .cdd-badge { padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; }
-    .cdd-badge-GET { background: var(--cdd-get-bg); color: var(--cdd-get); }
-    .cdd-badge-POST { background: var(--cdd-post-bg); color: var(--cdd-post); }
+    .cdd-badge { padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 700; text-decoration: none; display: inline-block; }
+    .cdd-badge-GET, .cdd-badge-get { background: var(--cdd-get-bg); color: var(--cdd-get); }
+    .cdd-badge-POST, .cdd-badge-post { background: var(--cdd-post-bg); color: var(--cdd-post); }
+    .cdd-badge-PUT, .cdd-badge-put { background: var(--cdd-put-bg); color: var(--cdd-put); }
+    .cdd-badge-DELETE, .cdd-badge-delete { background: var(--cdd-delete-bg); color: var(--cdd-delete); }
+    .cdd-badge-PATCH, .cdd-badge-patch { background: var(--cdd-patch-bg); color: var(--cdd-patch); }
+    .cdd-badge-OPTIONS, .cdd-badge-options { background: var(--cdd-options-bg); color: var(--cdd-options); }
+    .cdd-badge-HEAD, .cdd-badge-head { background: var(--cdd-head-bg); color: var(--cdd-head); }
+    .cdd-badge-TRACE, .cdd-badge-trace { background: var(--cdd-trace-bg); color: var(--cdd-trace); }
+    .cdd-badge-QUERY, .cdd-badge-query { background: var(--cdd-query-bg); color: var(--cdd-query); }
+    .cdd-badge-workflow { background: var(--cdd-workflow-bg); color: var(--cdd-workflow); }
+    .cdd-badge-channel { background: var(--cdd-options-bg); color: var(--cdd-options); }
+    .cdd-badge-meta { background: rgba(117, 119, 128, 0.15); color: var(--cdd-on-surface-variant); font-weight: 500; }
+
+    .cdd-steps-pipeline { display: flex; flex-direction: column; gap: 1rem; margin: 1rem 0; border-left: 3px solid var(--cdd-primary); padding-left: 1rem; }
+    .cdd-step-card { border: 1px solid var(--cdd-outline-variant); border-radius: 8px; padding: 1rem; background: var(--cdd-surface); }
+    .cdd-step-header { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .cdd-step-index { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: var(--cdd-primary); color: var(--cdd-on-primary); font-size: 0.75rem; font-weight: 700; }
+    .cdd-step-subtitle { font-size: 0.8125rem; margin: 0.75rem 0 0.25rem; color: var(--cdd-on-surface-variant); }
+    .cdd-source-descriptions { margin: 1rem 0; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; font-size: 0.875rem; }
+    .cdd-source-chip { padding: 0.25rem 0.5rem; border: 1px solid var(--cdd-outline-variant); border-radius: 6px; }
 
     .cdd-code-card { background: #1e1e1e; border-radius: 12px; color: #fff; overflow: hidden; }
     .cdd-code-tabs { display: flex; flex-wrap: wrap; }
@@ -449,8 +1016,8 @@ export function generateAOTHtml(
     .cdd-try-btn { margin-top: 1rem; background: var(--cdd-primary); color: var(--cdd-on-primary); border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-weight: 500; }
     .cdd-try-btn:hover { opacity: 0.9; }
 
-    ${languages.map(lang => `#lang-opt-${lang}:checked ~ .cdd-layout label[for="lang-opt-${lang}"] { background: var(--cdd-primary); color: var(--cdd-on-primary); border-color: var(--cdd-primary); font-weight: 500; }`).join('\n')}
-    ${languages.map(lang => `#lang-opt-${lang}:focus-visible ~ .cdd-layout label[for="lang-opt-${lang}"] { outline: 2px solid var(--cdd-primary); outline-offset: 2px; }`).join('\n')}
+    ${languages.map(lang => `#lang-opt-${lang}:checked ~ .cdd-layout label[for="lang-opt-${lang}"] { background: var(--cdd-primary); color: var(--cdd-on-primary); border-color: var(--cdd-primary); font-weight: 500; }`).join(String.fromCharCode(10))}
+    ${languages.map(lang => `#lang-opt-${lang}:focus-visible ~ .cdd-layout label[for="lang-opt-${lang}"] { outline: 2px solid var(--cdd-primary); outline-offset: 2px; }`).join(String.fromCharCode(10))}
     #opt-imports:checked ~ .cdd-layout label[for="opt-imports"] { background: var(--cdd-primary); color: var(--cdd-on-primary); border-color: var(--cdd-primary); }
     #opt-imports:focus-visible ~ .cdd-layout label[for="opt-imports"] { outline: 2px solid var(--cdd-primary); outline-offset: 2px; }
     #opt-wrapping:checked ~ .cdd-layout label[for="opt-wrapping"] { background: var(--cdd-primary); color: var(--cdd-on-primary); border-color: var(--cdd-primary); }
@@ -468,22 +1035,32 @@ export function generateAOTHtml(
   </style>
 </head>
 <body>
-  ${languages.map((lang, i) => `<input type="radio" id="lang-opt-${lang}" name="global-lang" class="cdd-visually-hidden" ${i === 0 ? 'checked' : ''}>`).join('')}
+  ${languages.map((lang, i) => `<input type="radio" id="lang-opt-${escapeHtml(lang)}" name="global-lang" class="cdd-visually-hidden" ${i === 0 ? 'checked' : ''}>`).join('')}
   <input type="checkbox" id="opt-imports" class="cdd-visually-hidden" checked>
   <input type="checkbox" id="opt-wrapping" class="cdd-visually-hidden" checked>
   <input type="checkbox" id="opt-dark-mode" class="cdd-visually-hidden" ${theme === 'dark' ? 'checked' : ''}>
 
   <div class="cdd-layout">
-    <aside class="cdd-sidebar-left">
-      <h1 style="font-size: 1.25rem;">${spec.info.title}</h1>
-      <div class="cdd-sidebar-title">${t.paths}</div>
+    <aside class="cdd-sidebar-left" aria-label="${escapeHtml(t.tocNavLabel)}">
+      <h1 style="font-size: 1.25rem;">${escapeHtml(spec.info.title)}</h1>
+      <div class="cdd-sidebar-title">${escapeHtml(t.paths)}</div>
       ${tocHtml}
-      <div class="cdd-sidebar-title">${t.schemas}</div>
-      <nav>
+      ${
+          webhooksTocHtml
+              ? `<div class="cdd-sidebar-title">${escapeHtml(t.webhooksHeading)}</div>${webhooksTocHtml}`
+              : ''
+      }
+      ${
+          workflowsTocHtml
+              ? `<div class="cdd-sidebar-title">${escapeHtml(t.workflowsHeading)}</div>${workflowsTocHtml}`
+              : ''
+      }
+      <div class="cdd-sidebar-title">${escapeHtml(t.schemas)}</div>
+      <nav aria-label="${escapeHtml(t.schemas)}">
         ${
             spec.components?.schemas
                 ? Object.keys(spec.components.schemas)
-                      .map(name => `<a href="#schema-${name}" class="cdd-toc-item">${name}</a>`)
+                      .map(name => `<a href="#schema-${escapeHtml(name)}" class="cdd-toc-item">${escapeHtml(name)}</a>`)
                       .join('')
                 : ''
         }
@@ -492,17 +1069,18 @@ export function generateAOTHtml(
 
     <main class="cdd-main">
       <header>
-        <h1 style="font-size: 3rem; font-weight: 300;">${spec.info.title}</h1>
+        <h1 style="font-size: 3rem; font-weight: 300;">${escapeHtml(spec.info.title)}</h1>
         <div class="cdd-description">${renderMarkdown(spec.info.description)}</div>
-        ${spec.info.termsOfService ? `<p style="font-size: 0.875rem;"><a href="${spec.info.termsOfService}" target="_blank">Terms of Service</a></p>` : ''}
+        ${sourceDescriptionsHtml}
+        ${spec.info.termsOfService ? `<p style="font-size: 0.875rem;"><a href="${escapeHtml(spec.info.termsOfService)}" target="_blank">${escapeHtml(t.termsOfService)}</a></p>` : ''}
         ${
             spec.info.contact
-                ? `<p style="font-size: 0.875rem;">Contact: ${
+                ? `<p style="font-size: 0.875rem;">${escapeHtml(t.contactPrefix)}${
                       spec.info.contact.url
-                          ? `<a href="${spec.info.contact.url}" target="_blank">${spec.info.contact.name || 'API Support'}</a>`
+                          ? `<a href="${escapeHtml(spec.info.contact.url)}" target="_blank">${escapeHtml(spec.info.contact.name || t.apiSupport)}</a>`
                           : spec.info.contact.email
-                            ? `<a href="mailto:${spec.info.contact.email}">${spec.info.contact.name || spec.info.contact.email}</a>`
-                            : spec.info.contact.name
+                            ? `<a href="mailto:${escapeHtml(spec.info.contact.email)}">${escapeHtml(spec.info.contact.name || spec.info.contact.email)}</a>`
+                            : escapeHtml(spec.info.contact.name || t.apiSupport)
                   }</p>`
                 : ''
         }
@@ -512,19 +1090,19 @@ export function generateAOTHtml(
     </main>
 
     <aside class="cdd-sidebar-right">
-      <div class="cdd-sidebar-title">${t.settings}</div>
+      <div class="cdd-sidebar-title">${escapeHtml(t.settings)}</div>
       
-      <p style="font-size: 0.875rem; margin-bottom: 0.5rem;">Appearance</p>
+      <p style="font-size: 0.875rem; margin-bottom: 0.5rem;">${escapeHtml(t.appearanceHeading)}</p>
       <label for="opt-dark-mode" class="cdd-setting-label">
-        ${t.darkMode}
+        ${escapeHtml(t.darkMode)}
       </label>
 
-      <p style="font-size: 0.875rem; margin-top: 1rem; margin-bottom: 0.5rem;">${t.language}</p>
+      <p style="font-size: 0.875rem; margin-top: 1rem; margin-bottom: 0.5rem;">${escapeHtml(t.language)}</p>
       ${languages
           .map(
               lang => `
-        <label for="lang-opt-${lang}" class="cdd-setting-label">
-          ${lang}
+        <label for="lang-opt-${escapeHtml(lang)}" class="cdd-setting-label">
+          ${escapeHtml(lang)}
         </label>
       `,
           )
@@ -532,10 +1110,10 @@ export function generateAOTHtml(
       
       <div style="margin-top: 1rem;">
         <label for="opt-imports" class="cdd-setting-label">
-          ${t.includeImports}
+          ${escapeHtml(t.includeImports)}
         </label>
         <label for="opt-wrapping" class="cdd-setting-label">
-          ${t.includeWrapping}
+          ${escapeHtml(t.includeWrapping)}
         </label>
       </div>
     </aside>

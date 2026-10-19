@@ -1,3 +1,9 @@
+/**
+ * OpenAPI 3.2.0 and Swagger 2.0 Parser and Normalizer.
+ * @module parser
+ */
+
+import yaml from 'js-yaml';
 import {
     DocData,
     CodeExample,
@@ -31,8 +37,67 @@ import {
     SecuritySchemeObject,
     OAuthFlowsObject,
     OAuthFlowObject,
+    JsonValue,
+    STANDARD_HTTP_METHODS,
 } from './types';
-import yaml from 'js-yaml';
+import { transformSwagger2ToOpenAPI3 } from './swagger2';
+import { isArazzoSpec, parseArazzoSpec, normalizeArazzoWorkflows } from './arazzo-parser';
+
+/**
+ * Type guard checking if an unknown value is a non-null plain object record.
+ * @param val The unknown value to inspect.
+ * @returns True if the value is a non-null, non-array object.
+ */
+export function isRecord(val: unknown): val is Record<string, unknown> {
+    return typeof val === 'object' && val !== null && !Array.isArray(val);
+}
+
+/**
+ * Reconstructs a single code string from a structured code snippet object (`imports`, `wrapperStart` / `wrapper_start`, `snippet` / `code`, `wrapperEnd` / `wrapper_end`).
+ * @param codeRec The structured code record.
+ * @returns The assembled code snippet string.
+ */
+export function assembleStructuredCodeSnippet(codeRec: Record<string, unknown>): string {
+    if (typeof codeRec['default'] === 'object' && isRecord(codeRec['default'])) {
+        return assembleStructuredCodeSnippet(codeRec['default']);
+    }
+    const parts: string[] = [];
+    const imports = codeRec['imports'];
+    const wrapperStart = codeRec['wrapperStart'] ?? codeRec['wrapper_start'];
+    const snippet = codeRec['snippet'] ?? codeRec['code'];
+    const wrapperEnd = codeRec['wrapperEnd'] ?? codeRec['wrapper_end'];
+
+    if (typeof imports === 'string' && imports.trim()) parts.push(imports.trim());
+    if (typeof wrapperStart === 'string' && wrapperStart.trim()) parts.push(wrapperStart.trim());
+    if (typeof snippet === 'string' && snippet.trim()) parts.push(snippet.trim());
+    if (typeof wrapperEnd === 'string' && wrapperEnd.trim()) parts.push(wrapperEnd.trim());
+
+    return parts.join(String.fromCharCode(10));
+}
+
+/**
+ * Coerces an unknown value into a safe `JsonValue` recursively.
+ * @param val The value to coerce.
+ * @returns A valid `JsonValue`.
+ */
+export function toJsonValue(val: unknown): JsonValue {
+    if (val === null || typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') {
+        return val;
+    }
+    if (Array.isArray(val)) {
+        return val.map(toJsonValue);
+    }
+    if (isRecord(val)) {
+        const out: { [key: string]: JsonValue } = {};
+        for (const [k, v] of Object.entries(val)) {
+            if (v !== undefined) {
+                out[k] = toJsonValue(v);
+            }
+        }
+        return out;
+    }
+    return String(val);
+}
 
 /**
  * Parses a raw info object into a normalized InfoObject.
@@ -40,16 +105,16 @@ import yaml from 'js-yaml';
  * @returns A normalized InfoObject.
  * @throws {Error} If the info object is missing.
  */
-export function parseInfo(obj: any): InfoObject {
-    if (!obj) throw new Error('Missing info object');
+export function parseInfo(obj: unknown): InfoObject {
+    if (!isRecord(obj)) throw new Error('Missing info object');
     return {
-        title: String(obj.title || ''),
-        summary: obj.summary ? String(obj.summary) : undefined,
-        description: obj.description ? String(obj.description) : undefined,
-        termsOfService: obj.termsOfService ? String(obj.termsOfService) : undefined,
-        contact: obj.contact ? parseContact(obj.contact) : undefined,
-        license: obj.license ? parseLicense(obj.license) : undefined,
-        version: String(obj.version || ''),
+        title: String(obj['title'] || ''),
+        summary: obj['summary'] ? String(obj['summary']) : undefined,
+        description: obj['description'] ? String(obj['description']) : undefined,
+        termsOfService: obj['termsOfService'] ? String(obj['termsOfService']) : undefined,
+        contact: isRecord(obj['contact']) ? parseContact(obj['contact']) : undefined,
+        license: isRecord(obj['license']) ? parseLicense(obj['license']) : undefined,
+        version: String(obj['version'] || ''),
     };
 }
 
@@ -58,11 +123,12 @@ export function parseInfo(obj: any): InfoObject {
  * @param obj The raw contact object from the spec.
  * @returns A normalized ContactObject.
  */
-export function parseContact(obj: any): ContactObject {
+export function parseContact(obj: unknown): ContactObject {
+    const rec = isRecord(obj) ? obj : {};
     return {
-        name: obj.name ? String(obj.name) : undefined,
-        url: obj.url ? String(obj.url) : undefined,
-        email: obj.email ? String(obj.email) : undefined,
+        name: rec['name'] ? String(rec['name']) : undefined,
+        url: rec['url'] ? String(rec['url']) : undefined,
+        email: rec['email'] ? String(rec['email']) : undefined,
     };
 }
 
@@ -71,11 +137,12 @@ export function parseContact(obj: any): ContactObject {
  * @param obj The raw license object from the spec.
  * @returns A normalized LicenseObject.
  */
-export function parseLicense(obj: any): LicenseObject {
+export function parseLicense(obj: unknown): LicenseObject {
+    const rec = isRecord(obj) ? obj : {};
     return {
-        name: String(obj.name || ''),
-        identifier: obj.identifier ? String(obj.identifier) : undefined,
-        url: obj.url ? String(obj.url) : undefined,
+        name: String(rec['name'] || ''),
+        identifier: rec['identifier'] ? String(rec['identifier']) : undefined,
+        url: rec['url'] ? String(rec['url']) : undefined,
     };
 }
 
@@ -84,11 +151,12 @@ export function parseLicense(obj: any): LicenseObject {
  * @param obj The raw server variable object from the spec.
  * @returns A normalized ServerVariableObject.
  */
-export function parseServerVariable(obj: any): ServerVariableObject {
+export function parseServerVariable(obj: unknown): ServerVariableObject {
+    const rec = isRecord(obj) ? obj : {};
     return {
-        enum: Array.isArray(obj.enum) ? obj.enum.map(String) : undefined,
-        default: String(obj.default || ''),
-        description: obj.description ? String(obj.description) : undefined,
+        enum: Array.isArray(rec['enum']) ? rec['enum'].map(String) : undefined,
+        default: String(rec['default'] || ''),
+        description: rec['description'] ? String(rec['description']) : undefined,
     };
 }
 
@@ -97,14 +165,16 @@ export function parseServerVariable(obj: any): ServerVariableObject {
  * @param obj The raw server object from the spec.
  * @returns A normalized ServerObject.
  */
-export function parseServer(obj: any): ServerObject {
+export function parseServer(obj: unknown): ServerObject {
+    const rec = isRecord(obj) ? obj : {};
     const server: ServerObject = {
-        url: String(obj.url || ''),
+        url: String(rec['url'] || ''),
     };
-    if (obj.description) server.description = String(obj.description);
-    if (obj.variables && typeof obj.variables === 'object') {
+    if (rec['description']) server.description = String(rec['description']);
+    const variables = rec['variables'];
+    if (isRecord(variables)) {
         server.variables = {};
-        for (const [k, v] of Object.entries(obj.variables)) {
+        for (const [k, v] of Object.entries(variables)) {
             server.variables[k] = parseServerVariable(v);
         }
     }
@@ -116,21 +186,60 @@ export function parseServer(obj: any): ServerObject {
  * @param obj The raw reference object from the spec.
  * @returns A normalized ReferenceObject.
  */
-export function parseReference(obj: any): ReferenceObject {
+export function parseReference(obj: unknown): ReferenceObject {
+    const rec = isRecord(obj) ? obj : {};
     return {
-        $ref: String(obj.$ref),
-        summary: obj.summary ? String(obj.summary) : undefined,
-        description: obj.description ? String(obj.description) : undefined,
+        $ref: String(rec['$ref'] || ''),
+        summary: rec['summary'] ? String(rec['summary']) : undefined,
+        description: rec['description'] ? String(rec['description']) : undefined,
     };
 }
 
 /**
  * Checks if an object is a ReferenceObject.
  * @param obj The object to check.
- * @returns True if the object has a $ref property.
+ * @returns True if the object has a string `$ref` property.
  */
-export function isReference(obj: any): obj is ReferenceObject {
-    return obj && typeof obj.$ref === 'string';
+export function isReference(obj: unknown): obj is ReferenceObject {
+    return isRecord(obj) && typeof obj['$ref'] === 'string';
+}
+
+/**
+ * Parses a raw discriminator object into a normalized DiscriminatorObject.
+ * @param obj The raw discriminator object from the spec.
+ * @returns A normalized DiscriminatorObject.
+ */
+export function parseDiscriminator(obj: Record<string, unknown>): DiscriminatorObject {
+    const disc: DiscriminatorObject = {
+        propertyName: String(obj['propertyName'] || ''),
+    };
+    const mapping = obj['mapping'];
+    if (isRecord(mapping)) {
+        disc.mapping = {};
+        for (const [k, v] of Object.entries(mapping)) {
+            disc.mapping[k] = String(v);
+        }
+    }
+    if (obj['defaultMapping'] !== undefined) {
+        disc.defaultMapping = String(obj['defaultMapping']);
+    }
+    return disc;
+}
+
+/**
+ * Parses a raw XML metadata object into a normalized XMLObject.
+ * @param obj The raw XML object from the spec.
+ * @returns A normalized XMLObject.
+ */
+export function parseXml(obj: Record<string, unknown>): XMLObject {
+    return {
+        name: obj['name'] ? String(obj['name']) : undefined,
+        namespace: obj['namespace'] ? String(obj['namespace']) : undefined,
+        prefix: obj['prefix'] ? String(obj['prefix']) : undefined,
+        attribute: typeof obj['attribute'] === 'boolean' ? obj['attribute'] : undefined,
+        wrapped: typeof obj['wrapped'] === 'boolean' ? obj['wrapped'] : undefined,
+        nodeType: obj['nodeType'] ? String(obj['nodeType']) : undefined,
+    };
 }
 
 /**
@@ -138,78 +247,63 @@ export function isReference(obj: any): obj is ReferenceObject {
  * @param obj The raw schema object from the spec.
  * @returns A normalized SchemaObject or ReferenceObject.
  */
-export function parseSchema(obj: any): SchemaObject | ReferenceObject {
+export function parseSchema(obj: unknown): SchemaObject | ReferenceObject {
     if (isReference(obj)) return parseReference(obj);
+    const rec = isRecord(obj) ? obj : {};
 
     const schema: SchemaObject = {};
-    if (obj.type) schema.type = String(obj.type);
-    if (obj.description) schema.description = String(obj.description);
-    if (obj.format) schema.format = String(obj.format);
-    if (obj.title) schema.title = String(obj.title);
-    if (typeof obj.multipleOf === 'number') schema.multipleOf = obj.multipleOf;
-    if (typeof obj.maximum === 'number') schema.maximum = obj.maximum;
-    if (typeof obj.exclusiveMaximum === 'boolean') schema.exclusiveMaximum = obj.exclusiveMaximum;
-    if (typeof obj.minimum === 'number') schema.minimum = obj.minimum;
-    if (typeof obj.exclusiveMinimum === 'boolean') schema.exclusiveMinimum = obj.exclusiveMinimum;
-    if (typeof obj.maxLength === 'number') schema.maxLength = obj.maxLength;
-    if (typeof obj.minLength === 'number') schema.minLength = obj.minLength;
-    if (obj.pattern) schema.pattern = String(obj.pattern);
-    if (typeof obj.maxItems === 'number') schema.maxItems = obj.maxItems;
-    if (typeof obj.minItems === 'number') schema.minItems = obj.minItems;
-    if (typeof obj.uniqueItems === 'boolean') schema.uniqueItems = obj.uniqueItems;
-    if (typeof obj.maxProperties === 'number') schema.maxProperties = obj.maxProperties;
-    if (typeof obj.minProperties === 'number') schema.minProperties = obj.minProperties;
-    if (Array.isArray(obj.required)) schema.required = obj.required.map(String);
-    if (Array.isArray(obj.enum)) schema.enum = obj.enum;
-    if (Array.isArray(obj.allOf)) schema.allOf = obj.allOf.map(parseSchema);
-    if (Array.isArray(obj.oneOf)) schema.oneOf = obj.oneOf.map(parseSchema);
-    if (Array.isArray(obj.anyOf)) schema.anyOf = obj.anyOf.map(parseSchema);
-    if (obj.not) schema.not = parseSchema(obj.not);
-    if (obj.items) schema.items = parseSchema(obj.items);
-    if (obj.properties && typeof obj.properties === 'object') {
+    if (rec['type']) schema.type = String(rec['type']);
+    if (rec['description']) schema.description = String(rec['description']);
+    if (rec['format']) schema.format = String(rec['format']);
+    if (rec['title']) schema.title = String(rec['title']);
+    if (typeof rec['multipleOf'] === 'number') schema.multipleOf = rec['multipleOf'];
+    if (typeof rec['maximum'] === 'number') schema.maximum = rec['maximum'];
+    if (typeof rec['exclusiveMaximum'] === 'boolean') schema.exclusiveMaximum = rec['exclusiveMaximum'];
+    if (typeof rec['minimum'] === 'number') schema.minimum = rec['minimum'];
+    if (typeof rec['exclusiveMinimum'] === 'boolean') schema.exclusiveMinimum = rec['exclusiveMinimum'];
+    if (typeof rec['maxLength'] === 'number') schema.maxLength = rec['maxLength'];
+    if (typeof rec['minLength'] === 'number') schema.minLength = rec['minLength'];
+    if (rec['pattern']) schema.pattern = String(rec['pattern']);
+    if (typeof rec['maxItems'] === 'number') schema.maxItems = rec['maxItems'];
+    if (typeof rec['minItems'] === 'number') schema.minItems = rec['minItems'];
+    if (typeof rec['uniqueItems'] === 'boolean') schema.uniqueItems = rec['uniqueItems'];
+    if (typeof rec['maxProperties'] === 'number') schema.maxProperties = rec['maxProperties'];
+    if (typeof rec['minProperties'] === 'number') schema.minProperties = rec['minProperties'];
+    if (Array.isArray(rec['required'])) schema.required = rec['required'].map(String);
+    if (Array.isArray(rec['enum'])) schema.enum = rec['enum'].map(toJsonValue);
+    if (Array.isArray(rec['allOf'])) schema.allOf = rec['allOf'].map(parseSchema);
+    if (Array.isArray(rec['oneOf'])) schema.oneOf = rec['oneOf'].map(parseSchema);
+    if (Array.isArray(rec['anyOf'])) schema.anyOf = rec['anyOf'].map(parseSchema);
+    if (rec['not']) schema.not = parseSchema(rec['not']);
+    if (rec['items']) schema.items = parseSchema(rec['items']);
+    const properties = rec['properties'];
+    if (isRecord(properties)) {
         schema.properties = {};
-        for (const [k, v] of Object.entries(obj.properties)) {
+        for (const [k, v] of Object.entries(properties)) {
             schema.properties[k] = parseSchema(v);
         }
     }
-    if (obj.additionalProperties !== undefined) {
+    const additionalProps = rec['additionalProperties'];
+    if (additionalProps !== undefined) {
         schema.additionalProperties =
-            typeof obj.additionalProperties === 'boolean'
-                ? obj.additionalProperties
-                : parseSchema(obj.additionalProperties);
+            typeof additionalProps === 'boolean' ? additionalProps : parseSchema(additionalProps);
     }
-    if (obj.default !== undefined) schema.default = obj.default;
-    if (typeof obj.nullable === 'boolean') schema.nullable = obj.nullable;
-    if (typeof obj.readOnly === 'boolean') schema.readOnly = obj.readOnly;
-    if (typeof obj.writeOnly === 'boolean') schema.writeOnly = obj.writeOnly;
-    if (obj.example !== undefined) schema.example = obj.example;
-    if (typeof obj.deprecated === 'boolean') schema.deprecated = obj.deprecated;
+    if (rec['default'] !== undefined) schema.default = toJsonValue(rec['default']);
+    if (typeof rec['nullable'] === 'boolean') schema.nullable = rec['nullable'];
+    if (typeof rec['readOnly'] === 'boolean') schema.readOnly = rec['readOnly'];
+    if (typeof rec['writeOnly'] === 'boolean') schema.writeOnly = rec['writeOnly'];
+    if (rec['example'] !== undefined) schema.example = toJsonValue(rec['example']);
+    if (typeof rec['deprecated'] === 'boolean') schema.deprecated = rec['deprecated'];
 
-    if (obj.discriminator) {
-        schema.discriminator = {
-            propertyName: String(obj.discriminator.propertyName),
-        };
-        if (obj.discriminator.mapping && typeof obj.discriminator.mapping === 'object') {
-            schema.discriminator.mapping = {};
-            for (const [k, v] of Object.entries(obj.discriminator.mapping)) {
-                schema.discriminator.mapping[k] = String(v);
-            }
-        }
-        if (obj.discriminator.defaultMapping !== undefined) {
-            schema.discriminator.defaultMapping = String(obj.discriminator.defaultMapping);
-        }
+    const disc = rec['discriminator'];
+    if (isRecord(disc)) {
+        schema.discriminator = parseDiscriminator(disc);
     }
-    if (obj.xml) {
-        schema.xml = {
-            name: obj.xml.name ? String(obj.xml.name) : undefined,
-            namespace: obj.xml.namespace ? String(obj.xml.namespace) : undefined,
-            prefix: obj.xml.prefix ? String(obj.xml.prefix) : undefined,
-            attribute: typeof obj.xml.attribute === 'boolean' ? obj.xml.attribute : undefined,
-            wrapped: typeof obj.xml.wrapped === 'boolean' ? obj.xml.wrapped : undefined,
-            nodeType: obj.xml.nodeType ? String(obj.xml.nodeType) : undefined,
-        };
+    const xml = rec['xml'];
+    if (isRecord(xml)) {
+        schema.xml = parseXml(xml);
     }
-    if (obj.externalDocs) schema.externalDocs = parseExternalDocs(obj.externalDocs);
+    if (rec['externalDocs']) schema.externalDocs = parseExternalDocs(rec['externalDocs']);
 
     return schema;
 }
@@ -219,13 +313,14 @@ export function parseSchema(obj: any): SchemaObject | ReferenceObject {
  * @param obj The raw example object from the spec.
  * @returns A normalized ExampleObject or ReferenceObject.
  */
-export function parseExample(obj: any): ExampleObject | ReferenceObject {
+export function parseExample(obj: unknown): ExampleObject | ReferenceObject {
     if (isReference(obj)) return parseReference(obj);
+    const rec = isRecord(obj) ? obj : {};
     return {
-        summary: obj.summary ? String(obj.summary) : undefined,
-        description: obj.description ? String(obj.description) : undefined,
-        value: obj.value,
-        externalValue: obj.externalValue ? String(obj.externalValue) : undefined,
+        summary: rec['summary'] ? String(rec['summary']) : undefined,
+        description: rec['description'] ? String(rec['description']) : undefined,
+        value: rec['value'] !== undefined ? toJsonValue(rec['value']) : undefined,
+        externalValue: rec['externalValue'] ? String(rec['externalValue']) : undefined,
     };
 }
 
@@ -234,14 +329,15 @@ export function parseExample(obj: any): ExampleObject | ReferenceObject {
  * @param obj The raw header object from the spec.
  * @returns A normalized HeaderObject or ReferenceObject.
  */
-export function parseHeader(obj: any): HeaderObject | ReferenceObject {
+export function parseHeader(obj: unknown): HeaderObject | ReferenceObject {
     if (isReference(obj)) return parseReference(obj);
+    const rec = isRecord(obj) ? obj : {};
     const header: HeaderObject = {};
-    if (obj.description) header.description = String(obj.description);
-    if (typeof obj.required === 'boolean') header.required = obj.required;
-    if (typeof obj.deprecated === 'boolean') header.deprecated = obj.deprecated;
-    if (obj.schema) header.schema = parseSchema(obj.schema);
-    if (obj.example !== undefined) header.example = obj.example;
+    if (rec['description']) header.description = String(rec['description']);
+    if (typeof rec['required'] === 'boolean') header.required = rec['required'];
+    if (typeof rec['deprecated'] === 'boolean') header.deprecated = rec['deprecated'];
+    if (rec['schema']) header.schema = parseSchema(rec['schema']);
+    if (rec['example'] !== undefined) header.example = toJsonValue(rec['example']);
     return header;
 }
 
@@ -250,32 +346,36 @@ export function parseHeader(obj: any): HeaderObject | ReferenceObject {
  * @param obj The raw encoding object from the spec.
  * @returns A normalized EncodingObject.
  */
-export function parseEncoding(obj: any): EncodingObject {
+export function parseEncoding(obj: unknown): EncodingObject {
+    const rec = isRecord(obj) ? obj : {};
     const encoding: EncodingObject = {};
-    if (obj.contentType) encoding.contentType = String(obj.contentType);
-    if (obj.headers && typeof obj.headers === 'object') {
+    if (rec['contentType']) encoding.contentType = String(rec['contentType']);
+    const headers = rec['headers'];
+    if (isRecord(headers)) {
         encoding.headers = {};
-        for (const [k, v] of Object.entries(obj.headers)) {
+        for (const [k, v] of Object.entries(headers)) {
             encoding.headers[k] = parseHeader(v);
         }
     }
-    if (obj.style) encoding.style = String(obj.style);
-    if (typeof obj.explode === 'boolean') encoding.explode = obj.explode;
-    if (typeof obj.allowReserved === 'boolean') encoding.allowReserved = obj.allowReserved;
-    
-    if (obj.prefixEncoding && typeof obj.prefixEncoding === 'object') {
+    if (rec['style']) encoding.style = String(rec['style']);
+    if (typeof rec['explode'] === 'boolean') encoding.explode = rec['explode'];
+    if (typeof rec['allowReserved'] === 'boolean') encoding.allowReserved = rec['allowReserved'];
+
+    const prefixEncoding = rec['prefixEncoding'];
+    if (isRecord(prefixEncoding)) {
         encoding.prefixEncoding = {};
-        for (const [k, v] of Object.entries(obj.prefixEncoding)) {
+        for (const [k, v] of Object.entries(prefixEncoding)) {
             encoding.prefixEncoding[k] = parseEncoding(v);
         }
     }
-    if (obj.itemEncoding && typeof obj.itemEncoding === 'object') {
+    const itemEncoding = rec['itemEncoding'];
+    if (isRecord(itemEncoding)) {
         encoding.itemEncoding = {};
-        for (const [k, v] of Object.entries(obj.itemEncoding)) {
+        for (const [k, v] of Object.entries(itemEncoding)) {
             encoding.itemEncoding[k] = parseEncoding(v);
         }
     }
-    
+
     return encoding;
 }
 
@@ -284,32 +384,37 @@ export function parseEncoding(obj: any): EncodingObject {
  * @param obj The raw media type object from the spec.
  * @returns A normalized MediaTypeObject.
  */
-export function parseMediaType(obj: any): MediaTypeObject {
+export function parseMediaType(obj: unknown): MediaTypeObject {
+    const rec = isRecord(obj) ? obj : {};
     const mt: MediaTypeObject = {};
-    if (obj.schema) mt.schema = parseSchema(obj.schema);
-    if (obj.itemSchema) mt.itemSchema = parseSchema(obj.itemSchema);
-    if (obj.example !== undefined) mt.example = obj.example;
-    if (obj.examples && typeof obj.examples === 'object') {
+    if (rec['schema']) mt.schema = parseSchema(rec['schema']);
+    if (rec['itemSchema']) mt.itemSchema = parseSchema(rec['itemSchema']);
+    if (rec['example'] !== undefined) mt.example = toJsonValue(rec['example']);
+    const examples = rec['examples'];
+    if (isRecord(examples)) {
         mt.examples = {};
-        for (const [k, v] of Object.entries(obj.examples)) {
+        for (const [k, v] of Object.entries(examples)) {
             mt.examples[k] = parseExample(v);
         }
     }
-    if (obj.encoding && typeof obj.encoding === 'object') {
+    const encoding = rec['encoding'];
+    if (isRecord(encoding)) {
         mt.encoding = {};
-        for (const [k, v] of Object.entries(obj.encoding)) {
+        for (const [k, v] of Object.entries(encoding)) {
             mt.encoding[k] = parseEncoding(v);
         }
     }
-    if (obj.prefixEncoding && typeof obj.prefixEncoding === 'object') {
+    const prefixEncoding = rec['prefixEncoding'];
+    if (isRecord(prefixEncoding)) {
         mt.prefixEncoding = {};
-        for (const [k, v] of Object.entries(obj.prefixEncoding)) {
+        for (const [k, v] of Object.entries(prefixEncoding)) {
             mt.prefixEncoding[k] = parseEncoding(v);
         }
     }
-    if (obj.itemEncoding && typeof obj.itemEncoding === 'object') {
+    const itemEncoding = rec['itemEncoding'];
+    if (isRecord(itemEncoding)) {
         mt.itemEncoding = {};
-        for (const [k, v] of Object.entries(obj.itemEncoding)) {
+        for (const [k, v] of Object.entries(itemEncoding)) {
             mt.itemEncoding[k] = parseEncoding(v);
         }
     }
@@ -321,13 +426,15 @@ export function parseMediaType(obj: any): MediaTypeObject {
  * @param obj The raw request body object from the spec.
  * @returns A normalized RequestBodyObject or ReferenceObject.
  */
-export function parseRequestBody(obj: any): RequestBodyObject | ReferenceObject {
+export function parseRequestBody(obj: unknown): RequestBodyObject | ReferenceObject {
     if (isReference(obj)) return parseReference(obj);
+    const rec = isRecord(obj) ? obj : {};
     const rb: RequestBodyObject = { content: {} };
-    if (obj.description) rb.description = String(obj.description);
-    if (typeof obj.required === 'boolean') rb.required = obj.required;
-    if (obj.content && typeof obj.content === 'object') {
-        for (const [k, v] of Object.entries(obj.content)) {
+    if (rec['description']) rb.description = String(rec['description']);
+    if (typeof rec['required'] === 'boolean') rb.required = rec['required'];
+    const content = rec['content'];
+    if (isRecord(content)) {
+        for (const [k, v] of Object.entries(content)) {
             rb.content[k] = parseMediaType(v);
         }
     }
@@ -335,34 +442,47 @@ export function parseRequestBody(obj: any): RequestBodyObject | ReferenceObject 
 }
 
 /**
+ * Type guard checking if a value is a valid parameter `in` location.
+ * @param val The value to check.
+ * @returns True if the value is 'query', 'header', 'path', or 'cookie'.
+ */
+function isParameterIn(val: unknown): val is 'query' | 'header' | 'path' | 'cookie' {
+    return val === 'query' || val === 'header' || val === 'path' || val === 'cookie';
+}
+
+/**
  * Parses a raw parameter object into a normalized ParameterObject or ReferenceObject.
  * @param obj The raw parameter object from the spec.
  * @returns A normalized ParameterObject or ReferenceObject.
  */
-export function parseParameter(obj: any): ParameterObject | ReferenceObject {
+export function parseParameter(obj: unknown): ParameterObject | ReferenceObject {
     if (isReference(obj)) return parseReference(obj);
+    const rec = isRecord(obj) ? obj : {};
+    const inVal = rec['in'];
     const param: ParameterObject = {
-        name: String(obj.name || 'Unknown'),
-        in: obj.in === 'query' || obj.in === 'header' || obj.in === 'path' || obj.in === 'cookie' ? obj.in : 'query',
+        name: String(rec['name'] || 'Unknown'),
+        in: isParameterIn(inVal) ? inVal : 'query',
     };
-    if (obj.description) param.description = String(obj.description);
-    if (typeof obj.required === 'boolean') param.required = obj.required;
-    if (typeof obj.deprecated === 'boolean') param.deprecated = obj.deprecated;
-    if (typeof obj.allowEmptyValue === 'boolean') param.allowEmptyValue = obj.allowEmptyValue;
-    if (obj.style) param.style = String(obj.style);
-    if (typeof obj.explode === 'boolean') param.explode = obj.explode;
-    if (typeof obj.allowReserved === 'boolean') param.allowReserved = obj.allowReserved;
-    if (obj.schema) param.schema = parseSchema(obj.schema);
-    if (obj.example !== undefined) param.example = obj.example;
-    if (obj.examples && typeof obj.examples === 'object') {
+    if (rec['description']) param.description = String(rec['description']);
+    if (typeof rec['required'] === 'boolean') param.required = rec['required'];
+    if (typeof rec['deprecated'] === 'boolean') param.deprecated = rec['deprecated'];
+    if (typeof rec['allowEmptyValue'] === 'boolean') param.allowEmptyValue = rec['allowEmptyValue'];
+    if (rec['style']) param.style = String(rec['style']);
+    if (typeof rec['explode'] === 'boolean') param.explode = rec['explode'];
+    if (typeof rec['allowReserved'] === 'boolean') param.allowReserved = rec['allowReserved'];
+    if (rec['schema']) param.schema = parseSchema(rec['schema']);
+    if (rec['example'] !== undefined) param.example = toJsonValue(rec['example']);
+    const examples = rec['examples'];
+    if (isRecord(examples)) {
         param.examples = {};
-        for (const [k, v] of Object.entries(obj.examples)) {
+        for (const [k, v] of Object.entries(examples)) {
             param.examples[k] = parseExample(v);
         }
     }
-    if (obj.content && typeof obj.content === 'object') {
+    const content = rec['content'];
+    if (isRecord(content)) {
         param.content = {};
-        for (const [k, v] of Object.entries(obj.content)) {
+        for (const [k, v] of Object.entries(content)) {
             param.content[k] = parseMediaType(v);
         }
     }
@@ -374,15 +494,22 @@ export function parseParameter(obj: any): ParameterObject | ReferenceObject {
  * @param obj The raw link object from the spec.
  * @returns A normalized LinkObject or ReferenceObject.
  */
-export function parseLink(obj: any): LinkObject | ReferenceObject {
+export function parseLink(obj: unknown): LinkObject | ReferenceObject {
     if (isReference(obj)) return parseReference(obj);
+    const rec = isRecord(obj) ? obj : {};
     const link: LinkObject = {};
-    if (obj.operationRef) link.operationRef = String(obj.operationRef);
-    if (obj.operationId) link.operationId = String(obj.operationId);
-    if (obj.parameters) link.parameters = { ...obj.parameters };
-    if (obj.requestBody !== undefined) link.requestBody = obj.requestBody;
-    if (obj.description) link.description = String(obj.description);
-    if (obj.server) link.server = parseServer(obj.server);
+    if (rec['operationRef']) link.operationRef = String(rec['operationRef']);
+    if (rec['operationId']) link.operationId = String(rec['operationId']);
+    const parameters = rec['parameters'];
+    if (isRecord(parameters)) {
+        link.parameters = {};
+        for (const [k, v] of Object.entries(parameters)) {
+            link.parameters[k] = toJsonValue(v);
+        }
+    }
+    if (rec['requestBody'] !== undefined) link.requestBody = toJsonValue(rec['requestBody']);
+    if (rec['description']) link.description = String(rec['description']);
+    if (rec['server']) link.server = parseServer(rec['server']);
     return link;
 }
 
@@ -391,26 +518,30 @@ export function parseLink(obj: any): LinkObject | ReferenceObject {
  * @param obj The raw response object from the spec.
  * @returns A normalized ResponseObject or ReferenceObject.
  */
-export function parseResponse(obj: any): ResponseObject | ReferenceObject {
+export function parseResponse(obj: unknown): ResponseObject | ReferenceObject {
     if (isReference(obj)) return parseReference(obj);
+    const rec = isRecord(obj) ? obj : {};
     const resp: ResponseObject = {
-        description: String(obj.description || ''),
+        description: String(rec['description'] || ''),
     };
-    if (obj.headers && typeof obj.headers === 'object') {
+    const headers = rec['headers'];
+    if (isRecord(headers)) {
         resp.headers = {};
-        for (const [k, v] of Object.entries(obj.headers)) {
+        for (const [k, v] of Object.entries(headers)) {
             resp.headers[k] = parseHeader(v);
         }
     }
-    if (obj.content && typeof obj.content === 'object') {
+    const content = rec['content'];
+    if (isRecord(content)) {
         resp.content = {};
-        for (const [k, v] of Object.entries(obj.content)) {
+        for (const [k, v] of Object.entries(content)) {
             resp.content[k] = parseMediaType(v);
         }
     }
-    if (obj.links && typeof obj.links === 'object') {
+    const links = rec['links'];
+    if (isRecord(links)) {
         resp.links = {};
-        for (const [k, v] of Object.entries(obj.links)) {
+        for (const [k, v] of Object.entries(links)) {
             resp.links[k] = parseLink(v);
         }
     }
@@ -422,9 +553,10 @@ export function parseResponse(obj: any): ResponseObject | ReferenceObject {
  * @param obj The raw responses object from the spec.
  * @returns A normalized ResponsesObject.
  */
-export function parseResponses(obj: any): ResponsesObject {
+export function parseResponses(obj: unknown): ResponsesObject {
+    const rec = isRecord(obj) ? obj : {};
     const responses: ResponsesObject = {};
-    for (const [k, v] of Object.entries(obj)) {
+    for (const [k, v] of Object.entries(rec)) {
         if (k === 'default') {
             responses.default = parseResponse(v);
         } else {
@@ -439,10 +571,11 @@ export function parseResponses(obj: any): ResponsesObject {
  * @param obj The raw callback object from the spec.
  * @returns A normalized CallbackObject or ReferenceObject.
  */
-export function parseCallback(obj: any): CallbackObject | ReferenceObject {
+export function parseCallback(obj: unknown): CallbackObject | ReferenceObject {
     if (isReference(obj)) return parseReference(obj);
+    const rec = isRecord(obj) ? obj : {};
     const cb: CallbackObject = {};
-    for (const [k, v] of Object.entries(obj)) {
+    for (const [k, v] of Object.entries(rec)) {
         cb[k] = parsePathItem(v);
     }
     return cb;
@@ -453,10 +586,11 @@ export function parseCallback(obj: any): CallbackObject | ReferenceObject {
  * @param obj The raw external documentation object from the spec.
  * @returns A normalized ExternalDocumentationObject.
  */
-export function parseExternalDocs(obj: any): ExternalDocumentationObject {
+export function parseExternalDocs(obj: unknown): ExternalDocumentationObject {
+    const rec = isRecord(obj) ? obj : {};
     return {
-        url: String(obj.url || ''),
-        description: obj.description ? String(obj.description) : undefined,
+        url: String(rec['url'] || ''),
+        description: rec['description'] ? String(rec['description']) : undefined,
     };
 }
 
@@ -465,9 +599,10 @@ export function parseExternalDocs(obj: any): ExternalDocumentationObject {
  * @param obj The raw security requirement object from the spec.
  * @returns A normalized SecurityRequirementObject.
  */
-export function parseSecurityRequirement(obj: any): SecurityRequirementObject {
+export function parseSecurityRequirement(obj: unknown): SecurityRequirementObject {
+    const rec = isRecord(obj) ? obj : {};
     const req: SecurityRequirementObject = {};
-    for (const [k, v] of Object.entries(obj)) {
+    for (const [k, v] of Object.entries(rec)) {
         req[k] = Array.isArray(v) ? v.map(String) : [];
     }
     return req;
@@ -478,25 +613,27 @@ export function parseSecurityRequirement(obj: any): SecurityRequirementObject {
  * @param obj The raw operation object from the spec.
  * @returns A normalized OperationObject.
  */
-export function parseOperation(obj: any): OperationObject {
+export function parseOperation(obj: unknown): OperationObject {
+    const rec = isRecord(obj) ? obj : {};
     const op: OperationObject = {};
-    if (Array.isArray(obj.tags)) op.tags = obj.tags.map(String);
-    if (obj.summary) op.summary = String(obj.summary);
-    if (obj.description) op.description = String(obj.description);
-    if (obj.externalDocs) op.externalDocs = parseExternalDocs(obj.externalDocs);
-    if (obj.operationId) op.operationId = String(obj.operationId);
-    if (Array.isArray(obj.parameters)) op.parameters = obj.parameters.map(parseParameter);
-    if (obj.requestBody) op.requestBody = parseRequestBody(obj.requestBody);
-    if (obj.responses) op.responses = parseResponses(obj.responses);
-    if (obj.callbacks && typeof obj.callbacks === 'object') {
+    if (Array.isArray(rec['tags'])) op.tags = rec['tags'].map(String);
+    if (rec['summary']) op.summary = String(rec['summary']);
+    if (rec['description']) op.description = String(rec['description']);
+    if (rec['externalDocs']) op.externalDocs = parseExternalDocs(rec['externalDocs']);
+    if (rec['operationId']) op.operationId = String(rec['operationId']);
+    if (Array.isArray(rec['parameters'])) op.parameters = rec['parameters'].map(parseParameter);
+    if (rec['requestBody']) op.requestBody = parseRequestBody(rec['requestBody']);
+    if (rec['responses']) op.responses = parseResponses(rec['responses']);
+    const callbacks = rec['callbacks'];
+    if (isRecord(callbacks)) {
         op.callbacks = {};
-        for (const [k, v] of Object.entries(obj.callbacks)) {
+        for (const [k, v] of Object.entries(callbacks)) {
             op.callbacks[k] = parseCallback(v);
         }
     }
-    if (typeof obj.deprecated === 'boolean') op.deprecated = obj.deprecated;
-    if (Array.isArray(obj.security)) op.security = obj.security.map(parseSecurityRequirement);
-    if (Array.isArray(obj.servers)) op.servers = obj.servers.map(parseServer);
+    if (typeof rec['deprecated'] === 'boolean') op.deprecated = rec['deprecated'];
+    if (Array.isArray(rec['security'])) op.security = rec['security'].map(parseSecurityRequirement);
+    if (Array.isArray(rec['servers'])) op.servers = rec['servers'].map(parseServer);
     return op;
 }
 
@@ -505,28 +642,30 @@ export function parseOperation(obj: any): OperationObject {
  * @param obj The raw path item object from the spec.
  * @returns A normalized PathItemObject or ReferenceObject.
  */
-export function parsePathItem(obj: any): PathItemObject | ReferenceObject {
+export function parsePathItem(obj: unknown): PathItemObject | ReferenceObject {
     if (isReference(obj)) return parseReference(obj);
+    const rec = isRecord(obj) ? obj : {};
     const item: PathItemObject = {};
-    if (obj.summary) item.summary = String(obj.summary);
-    if (obj.description) item.description = String(obj.description);
-    if (obj.get) item.get = parseOperation(obj.get);
-    if (obj.put) item.put = parseOperation(obj.put);
-    if (obj.post) item.post = parseOperation(obj.post);
-    if (obj.delete) item.delete = parseOperation(obj.delete);
-    if (obj.options) item.options = parseOperation(obj.options);
-    if (obj.head) item.head = parseOperation(obj.head);
-    if (obj.patch) item.patch = parseOperation(obj.patch);
-    if (obj.trace) item.trace = parseOperation(obj.trace);
-    if (obj.query) item.query = parseOperation(obj.query);
-    if (obj.additionalOperations && typeof obj.additionalOperations === 'object') {
+    if (rec['summary']) item.summary = String(rec['summary']);
+    if (rec['description']) item.description = String(rec['description']);
+    if (rec['get']) item.get = parseOperation(rec['get']);
+    if (rec['put']) item.put = parseOperation(rec['put']);
+    if (rec['post']) item.post = parseOperation(rec['post']);
+    if (rec['delete']) item.delete = parseOperation(rec['delete']);
+    if (rec['options']) item.options = parseOperation(rec['options']);
+    if (rec['head']) item.head = parseOperation(rec['head']);
+    if (rec['patch']) item.patch = parseOperation(rec['patch']);
+    if (rec['trace']) item.trace = parseOperation(rec['trace']);
+    if (rec['query']) item.query = parseOperation(rec['query']);
+    const additionalOps = rec['additionalOperations'];
+    if (isRecord(additionalOps)) {
         item.additionalOperations = {};
-        for (const [k, v] of Object.entries(obj.additionalOperations)) {
+        for (const [k, v] of Object.entries(additionalOps)) {
             item.additionalOperations[k] = parseOperation(v);
         }
     }
-    if (Array.isArray(obj.servers)) item.servers = obj.servers.map(parseServer);
-    if (Array.isArray(obj.parameters)) item.parameters = obj.parameters.map(parseParameter);
+    if (Array.isArray(rec['servers'])) item.servers = rec['servers'].map(parseServer);
+    if (Array.isArray(rec['parameters'])) item.parameters = rec['parameters'].map(parseParameter);
     return item;
 }
 
@@ -535,11 +674,12 @@ export function parsePathItem(obj: any): PathItemObject | ReferenceObject {
  * @param obj The raw paths object from the spec.
  * @returns A normalized PathsObject.
  */
-export function parsePaths(obj: any): PathsObject {
+export function parsePaths(obj: unknown): PathsObject {
+    const rec = isRecord(obj) ? obj : {};
     const paths: PathsObject = {};
-    for (const [k, v] of Object.entries(obj)) {
+    for (const [k, v] of Object.entries(rec)) {
         if (k.startsWith('/')) {
-            paths[k] = parsePathItem(v) as PathItemObject; // references are permitted but type simplified
+            paths[k] = parsePathItem(v);
         }
     }
     return paths;
@@ -550,14 +690,16 @@ export function parsePaths(obj: any): PathsObject {
  * @param obj The raw OAuth flow object from the spec.
  * @returns A normalized OAuthFlowObject.
  */
-export function parseOAuthFlow(obj: any): OAuthFlowObject {
+export function parseOAuthFlow(obj: unknown): OAuthFlowObject {
+    const rec = isRecord(obj) ? obj : {};
     const flow: OAuthFlowObject = { scopes: {} };
-    if (obj.authorizationUrl) flow.authorizationUrl = String(obj.authorizationUrl);
-    if (obj.tokenUrl) flow.tokenUrl = String(obj.tokenUrl);
-    if (obj.refreshUrl) flow.refreshUrl = String(obj.refreshUrl);
-    if (obj.deviceAuthorizationUrl) flow.deviceAuthorizationUrl = String(obj.deviceAuthorizationUrl);
-    if (obj.scopes && typeof obj.scopes === 'object') {
-        for (const [k, v] of Object.entries(obj.scopes)) {
+    if (rec['authorizationUrl']) flow.authorizationUrl = String(rec['authorizationUrl']);
+    if (rec['tokenUrl']) flow.tokenUrl = String(rec['tokenUrl']);
+    if (rec['refreshUrl']) flow.refreshUrl = String(rec['refreshUrl']);
+    if (rec['deviceAuthorizationUrl']) flow.deviceAuthorizationUrl = String(rec['deviceAuthorizationUrl']);
+    const scopes = rec['scopes'];
+    if (isRecord(scopes)) {
+        for (const [k, v] of Object.entries(scopes)) {
             flow.scopes[k] = String(v);
         }
     }
@@ -565,30 +707,54 @@ export function parseOAuthFlow(obj: any): OAuthFlowObject {
 }
 
 /**
+ * Type guard checking if a value is a valid SecurityScheme `type`.
+ * @param val The value to check.
+ * @returns True if the value is a valid SecuritySchemeObject type.
+ */
+function isSecuritySchemeType(val: unknown): val is 'apiKey' | 'http' | 'mutualTLS' | 'oauth2' | 'openIdConnect' {
+    return val === 'apiKey' || val === 'http' || val === 'mutualTLS' || val === 'oauth2' || val === 'openIdConnect';
+}
+
+/**
+ * Type guard checking if a value is a valid SecurityScheme `in` location.
+ * @param val The value to check.
+ * @returns True if the value is 'query', 'header', or 'cookie'.
+ */
+function isSecuritySchemeIn(val: unknown): val is 'query' | 'header' | 'cookie' {
+    return val === 'query' || val === 'header' || val === 'cookie';
+}
+
+/**
  * Parses a raw security scheme object into a normalized SecuritySchemeObject or ReferenceObject.
  * @param obj The raw security scheme object from the spec.
  * @returns A normalized SecuritySchemeObject or ReferenceObject.
  */
-export function parseSecurityScheme(obj: any): SecuritySchemeObject | ReferenceObject {
+export function parseSecurityScheme(obj: unknown): SecuritySchemeObject | ReferenceObject {
     if (isReference(obj)) return parseReference(obj);
+    const rec = isRecord(obj) ? obj : {};
+    const typeVal = rec['type'];
     const scheme: SecuritySchemeObject = {
-        type: ['apiKey', 'http', 'mutualTLS', 'oauth2', 'openIdConnect'].includes(obj.type) ? obj.type : 'http',
+        type: isSecuritySchemeType(typeVal) ? typeVal : 'http',
     };
-    if (obj.description) scheme.description = String(obj.description);
-    if (obj.name) scheme.name = String(obj.name);
-    if (obj.in && ['query', 'header', 'cookie'].includes(obj.in)) scheme.in = obj.in as any;
-    if (obj.scheme) scheme.scheme = String(obj.scheme);
-    if (obj.bearerFormat) scheme.bearerFormat = String(obj.bearerFormat);
-    if (obj.openIdConnectUrl) scheme.openIdConnectUrl = String(obj.openIdConnectUrl);
-    if (obj.oauth2MetadataUrl) scheme.oauth2MetadataUrl = String(obj.oauth2MetadataUrl);
-    
-    if (obj.flows && typeof obj.flows === 'object') {
-        scheme.flows = {};
-        if (obj.flows.implicit) scheme.flows.implicit = parseOAuthFlow(obj.flows.implicit);
-        if (obj.flows.password) scheme.flows.password = parseOAuthFlow(obj.flows.password);
-        if (obj.flows.clientCredentials) scheme.flows.clientCredentials = parseOAuthFlow(obj.flows.clientCredentials);
-        if (obj.flows.authorizationCode) scheme.flows.authorizationCode = parseOAuthFlow(obj.flows.authorizationCode);
-        if (obj.flows.deviceAuthorization) scheme.flows.deviceAuthorization = parseOAuthFlow(obj.flows.deviceAuthorization);
+    if (rec['description']) scheme.description = String(rec['description']);
+    if (rec['name']) scheme.name = String(rec['name']);
+    const inVal = rec['in'];
+    if (isSecuritySchemeIn(inVal)) scheme.in = inVal;
+    if (rec['scheme']) scheme.scheme = String(rec['scheme']);
+    if (rec['bearerFormat']) scheme.bearerFormat = String(rec['bearerFormat']);
+    if (rec['openIdConnectUrl']) scheme.openIdConnectUrl = String(rec['openIdConnectUrl']);
+    if (rec['oauth2MetadataUrl']) scheme.oauth2MetadataUrl = String(rec['oauth2MetadataUrl']);
+
+    const flows = rec['flows'];
+    if (isRecord(flows)) {
+        const parsedFlows: OAuthFlowsObject = {};
+        if (flows['implicit']) parsedFlows.implicit = parseOAuthFlow(flows['implicit']);
+        if (flows['password']) parsedFlows.password = parseOAuthFlow(flows['password']);
+        if (flows['clientCredentials']) parsedFlows.clientCredentials = parseOAuthFlow(flows['clientCredentials']);
+        if (flows['authorizationCode']) parsedFlows.authorizationCode = parseOAuthFlow(flows['authorizationCode']);
+        if (flows['deviceAuthorization'])
+            parsedFlows.deviceAuthorization = parseOAuthFlow(flows['deviceAuthorization']);
+        scheme.flows = parsedFlows;
     }
     return scheme;
 }
@@ -598,51 +764,63 @@ export function parseSecurityScheme(obj: any): SecuritySchemeObject | ReferenceO
  * @param obj The raw components object from the spec.
  * @returns A normalized ComponentsObject.
  */
-export function parseComponents(obj: any): ComponentsObject {
+export function parseComponents(obj: unknown): ComponentsObject {
+    const rec = isRecord(obj) ? obj : {};
     const comp: ComponentsObject = {};
-    if (obj.schemas && typeof obj.schemas === 'object') {
+    const schemas = rec['schemas'];
+    if (isRecord(schemas)) {
         comp.schemas = {};
-        for (const [k, v] of Object.entries(obj.schemas)) comp.schemas[k] = parseSchema(v);
+        for (const [k, v] of Object.entries(schemas)) comp.schemas[k] = parseSchema(v);
     }
-    if (obj.responses && typeof obj.responses === 'object') {
+    const responses = rec['responses'];
+    if (isRecord(responses)) {
         comp.responses = {};
-        for (const [k, v] of Object.entries(obj.responses)) comp.responses[k] = parseResponse(v);
+        for (const [k, v] of Object.entries(responses)) comp.responses[k] = parseResponse(v);
     }
-    if (obj.parameters && typeof obj.parameters === 'object') {
+    const parameters = rec['parameters'];
+    if (isRecord(parameters)) {
         comp.parameters = {};
-        for (const [k, v] of Object.entries(obj.parameters)) comp.parameters[k] = parseParameter(v);
+        for (const [k, v] of Object.entries(parameters)) comp.parameters[k] = parseParameter(v);
     }
-    if (obj.examples && typeof obj.examples === 'object') {
+    const examples = rec['examples'];
+    if (isRecord(examples)) {
         comp.examples = {};
-        for (const [k, v] of Object.entries(obj.examples)) comp.examples[k] = parseExample(v);
+        for (const [k, v] of Object.entries(examples)) comp.examples[k] = parseExample(v);
     }
-    if (obj.requestBodies && typeof obj.requestBodies === 'object') {
+    const requestBodies = rec['requestBodies'];
+    if (isRecord(requestBodies)) {
         comp.requestBodies = {};
-        for (const [k, v] of Object.entries(obj.requestBodies)) comp.requestBodies[k] = parseRequestBody(v);
+        for (const [k, v] of Object.entries(requestBodies)) comp.requestBodies[k] = parseRequestBody(v);
     }
-    if (obj.headers && typeof obj.headers === 'object') {
+    const headers = rec['headers'];
+    if (isRecord(headers)) {
         comp.headers = {};
-        for (const [k, v] of Object.entries(obj.headers)) comp.headers[k] = parseHeader(v);
+        for (const [k, v] of Object.entries(headers)) comp.headers[k] = parseHeader(v);
     }
-    if (obj.securitySchemes && typeof obj.securitySchemes === 'object') {
+    const securitySchemes = rec['securitySchemes'];
+    if (isRecord(securitySchemes)) {
         comp.securitySchemes = {};
-        for (const [k, v] of Object.entries(obj.securitySchemes)) comp.securitySchemes[k] = parseSecurityScheme(v);
+        for (const [k, v] of Object.entries(securitySchemes)) comp.securitySchemes[k] = parseSecurityScheme(v);
     }
-    if (obj.links && typeof obj.links === 'object') {
+    const links = rec['links'];
+    if (isRecord(links)) {
         comp.links = {};
-        for (const [k, v] of Object.entries(obj.links)) comp.links[k] = parseLink(v);
+        for (const [k, v] of Object.entries(links)) comp.links[k] = parseLink(v);
     }
-    if (obj.callbacks && typeof obj.callbacks === 'object') {
+    const callbacks = rec['callbacks'];
+    if (isRecord(callbacks)) {
         comp.callbacks = {};
-        for (const [k, v] of Object.entries(obj.callbacks)) comp.callbacks[k] = parseCallback(v);
+        for (const [k, v] of Object.entries(callbacks)) comp.callbacks[k] = parseCallback(v);
     }
-    if (obj.pathItems && typeof obj.pathItems === 'object') {
+    const pathItems = rec['pathItems'];
+    if (isRecord(pathItems)) {
         comp.pathItems = {};
-        for (const [k, v] of Object.entries(obj.pathItems)) comp.pathItems[k] = parsePathItem(v);
+        for (const [k, v] of Object.entries(pathItems)) comp.pathItems[k] = parsePathItem(v);
     }
-    if (obj.mediaTypes && typeof obj.mediaTypes === 'object') {
+    const mediaTypes = rec['mediaTypes'];
+    if (isRecord(mediaTypes)) {
         comp.mediaTypes = {};
-        for (const [k, v] of Object.entries(obj.mediaTypes)) comp.mediaTypes[k] = parseMediaType(v);
+        for (const [k, v] of Object.entries(mediaTypes)) comp.mediaTypes[k] = parseMediaType(v);
     }
     return comp;
 }
@@ -652,95 +830,216 @@ export function parseComponents(obj: any): ComponentsObject {
  * @param obj The raw tag object from the spec.
  * @returns A normalized TagObject.
  */
-export function parseTag(obj: any): TagObject {
-    const tag: TagObject = { name: String(obj.name || 'Unknown') };
-    if (obj.summary) tag.summary = String(obj.summary);
-    if (obj.description) tag.description = String(obj.description);
-    if (obj.externalDocs) tag.externalDocs = parseExternalDocs(obj.externalDocs);
-    if (obj.parent) tag.parent = String(obj.parent);
-    if (obj.kind) tag.kind = String(obj.kind);
+export function parseTag(obj: unknown): TagObject {
+    const rec = isRecord(obj) ? obj : {};
+    const tag: TagObject = { name: String(rec['name'] || 'Unknown') };
+    if (rec['summary']) tag.summary = String(rec['summary']);
+    if (rec['description']) tag.description = String(rec['description']);
+    if (rec['externalDocs']) tag.externalDocs = parseExternalDocs(rec['externalDocs']);
+    if (rec['parent']) tag.parent = String(rec['parent']);
+    if (rec['kind']) tag.kind = String(rec['kind']);
     return tag;
 }
 
-import { transformSwagger2ToOpenAPI3 } from './swagger2';
-
 /**
- * Normalizes an OpenAPI specification string (JSON or YAML) into the internal `DocData` representation.
- * @param specContent Raw OpenAPI spec string (YAML/JSON).
+ * Normalizes an OpenAPI 3.2.0, Swagger 2.0, or Arazzo 1.1.0 specification string (JSON or YAML)
+ * into the internal `DocData` representation.
+ * @param specContent Raw OpenAPI or Arazzo spec string (YAML/JSON).
+ * @param companionArazzoContent Optional companion Arazzo 1.1.0 spec string (YAML/JSON) to link with an OpenAPI spec.
  * @returns Normalized DocData.
  * @throws {Error} If the spec format is invalid.
  */
-export function normalizeSpec(specContent: string): DocData {
-    let parsed: any;
+export function normalizeSpec(specContent: string, companionArazzoContent?: string): DocData {
+    let parsed: unknown;
     try {
         parsed = yaml.load(specContent);
-    } catch (e) {
+    } catch {
         throw new Error('Invalid OpenAPI specification format.');
     }
 
-    if (!parsed || typeof parsed !== 'object') {
+    if (!isRecord(parsed)) {
         throw new Error('Invalid OpenAPI specification format.');
+    }
+
+    if (isArazzoSpec(parsed)) {
+        const arazzoSpec = parseArazzoSpec(specContent);
+        const workflows = normalizeArazzoWorkflows(arazzoSpec);
+        const spec: OpenAPI320 = {
+            openapi: '3.2.0',
+            info: {
+                title: arazzoSpec.info.title,
+                summary: arazzoSpec.info.summary,
+                description: arazzoSpec.info.description,
+                version: arazzoSpec.info.version,
+            },
+        };
+        if (arazzoSpec.$self) {
+            spec.$self = arazzoSpec.$self;
+        }
+        return {
+            specKind: 'arazzo',
+            spec,
+            codeExamples: {},
+            arazzoSpec,
+            workflows,
+            sourceDescriptions: arazzoSpec.sourceDescriptions,
+            workflowCodeExamples: {},
+        };
     }
 
     transformSwagger2ToOpenAPI3(parsed);
 
     const spec: OpenAPI320 = {
-        openapi: String(parsed.openapi || '3.2.0'),
-        info: parseInfo(parsed.info),
+        openapi: String(parsed['openapi'] || '3.2.0'),
+        info: parseInfo(parsed['info']),
     };
 
-    if (parsed.jsonSchemaDialect) spec.jsonSchemaDialect = String(parsed.jsonSchemaDialect);
-    if (Array.isArray(parsed.servers)) spec.servers = parsed.servers.map(parseServer);
-    if (parsed.paths && typeof parsed.paths === 'object') spec.paths = parsePaths(parsed.paths);
-    if (parsed.webhooks && typeof parsed.webhooks === 'object') {
+    if (parsed['$self']) spec.$self = String(parsed['$self']);
+    if (parsed['jsonSchemaDialect']) spec.jsonSchemaDialect = String(parsed['jsonSchemaDialect']);
+    if (Array.isArray(parsed['servers'])) spec.servers = parsed['servers'].map(parseServer);
+    if (isRecord(parsed['paths'])) spec.paths = parsePaths(parsed['paths']);
+    const webhooks = parsed['webhooks'];
+    if (isRecord(webhooks)) {
         spec.webhooks = {};
-        for (const [k, v] of Object.entries(parsed.webhooks)) {
+        for (const [k, v] of Object.entries(webhooks)) {
             spec.webhooks[k] = parsePathItem(v);
         }
     }
-    if (parsed.components && typeof parsed.components === 'object')
-        spec.components = parseComponents(parsed.components);
-    if (Array.isArray(parsed.security)) spec.security = parsed.security.map(parseSecurityRequirement);
-    if (Array.isArray(parsed.tags)) spec.tags = parsed.tags.map(parseTag);
-    if (parsed.externalDocs) spec.externalDocs = parseExternalDocs(parsed.externalDocs);
+    if (isRecord(parsed['components'])) {
+        spec.components = parseComponents(parsed['components']);
+    }
+    if (Array.isArray(parsed['security'])) {
+        spec.security = parsed['security'].map(parseSecurityRequirement);
+    }
+    if (Array.isArray(parsed['tags'])) {
+        spec.tags = parsed['tags'].map(parseTag);
+    }
+    if (parsed['externalDocs']) {
+        spec.externalDocs = parseExternalDocs(parsed['externalDocs']);
+    }
+
+    if (companionArazzoContent && companionArazzoContent.trim()) {
+        const arazzoSpec = parseArazzoSpec(companionArazzoContent);
+        const workflows = normalizeArazzoWorkflows(arazzoSpec, spec);
+        return {
+            specKind: 'combined',
+            spec,
+            codeExamples: {},
+            arazzoSpec,
+            workflows,
+            sourceDescriptions: arazzoSpec.sourceDescriptions,
+            workflowCodeExamples: {},
+        };
+    }
 
     return {
+        specKind: 'openapi',
         spec,
         codeExamples: {},
     };
 }
 
 /**
- * Maps generated SDK code examples to their respective operations in the documentation data.
+ * Extracts all operations (including standard HTTP methods and `additionalOperations`) from a `PathItemObject`.
+ * @param pathItem The path item object to inspect.
+ * @returns Array of `[methodName, OperationObject]` tuples.
+ */
+export function getPathOperations(pathItem: PathItemObject): Array<[string, OperationObject]> {
+    const entries: Array<[string, OperationObject]> = [];
+    for (const m of STANDARD_HTTP_METHODS) {
+        const op = pathItem[m];
+        if (op) {
+            entries.push([m, op]);
+        }
+    }
+    if (pathItem.additionalOperations) {
+        for (const [customMethod, op] of Object.entries(pathItem.additionalOperations)) {
+            entries.push([customMethod.toLowerCase(), op]);
+        }
+    }
+    return entries;
+}
+
+/**
+ * Represents a mapped OpenAPI or webhook operation entry used when correlating SDK code examples.
+ */
+interface OperationEntry {
+    /** The route path or webhook name. */
+    route: string;
+    /** The lowercase HTTP method name. */
+    method: string;
+    /** The parsed OpenAPI operation object. */
+    op: OperationObject;
+}
+
+/**
+ * Maps generated SDK code examples to their respective operations and Arazzo workflows in the documentation data.
  * @param docData The documentation data to update.
  * @param generatedFiles The list of generated code examples.
  */
 export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]): void {
-    if (!docData.spec.paths) return;
+    const operationMap: Record<string, OperationEntry> = {};
 
-    const operationMap: Record<string, { route: string; method: string; op: OperationObject }> = {};
+    if (docData.spec.paths) {
+        for (const [route, pathItem] of Object.entries(docData.spec.paths)) {
+            if (isReference(pathItem)) continue;
+            for (const [method, op] of getPathOperations(pathItem)) {
+                const id = op.operationId || `${method}-${route}`;
+                operationMap[id] = { route, method, op };
+            }
+        }
+    }
 
-    for (const [route, pathItem] of Object.entries(docData.spec.paths)) {
-        if (isReference(pathItem)) continue;
-        const methods = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head', 'trace'];
-        for (const m of methods) {
-            const op = (pathItem as any)[m];
-            if (op) {
-                const id = op.operationId || `${m}-${route}`;
-                operationMap[id] = { route, method: m, op };
+    if (docData.spec.webhooks) {
+        for (const [webhookName, pathItem] of Object.entries(docData.spec.webhooks)) {
+            if (isReference(pathItem)) continue;
+            for (const [method, op] of getPathOperations(pathItem)) {
+                const id = op.operationId || `webhook-${method}-${webhookName}`;
+                operationMap[id] = { route: webhookName, method, op };
             }
         }
     }
 
     const operations = Object.entries(operationMap);
-    if (operations.length === 0) return;
+    const workflows = docData.workflows ?? [];
 
     for (const file of generatedFiles) {
+        const normalizedFilepath = file.filepath.toLowerCase();
+
+        // Check if this example matches an Arazzo workflow first
+        if (workflows.length > 0) {
+            let matchedWfId: string | null = null;
+            for (const nw of workflows) {
+                const wfId = nw.workflow.workflowId;
+                const wfSlug = wfId.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+                if (
+                    normalizedFilepath === `workflow_${wfId.toLowerCase()}` ||
+                    normalizedFilepath === `workflow_${wfSlug}` ||
+                    normalizedFilepath.includes(`_workflows_${wfSlug}`) ||
+                    normalizedFilepath.includes(wfId.toLowerCase())
+                ) {
+                    matchedWfId = wfId;
+                    break;
+                }
+            }
+            if (matchedWfId) {
+                if (!docData.workflowCodeExamples) {
+                    docData.workflowCodeExamples = {};
+                }
+                const list = docData.workflowCodeExamples[matchedWfId] ?? [];
+                list.push(file);
+                docData.workflowCodeExamples[matchedWfId] = list;
+                continue;
+            }
+        }
+
+        if (operations.length === 0) continue;
+
         let matchedId: string | null = null;
 
         // 1. Try match with operationId
         for (const [id, info] of operations) {
-            if (info.op.operationId && (file.filepath || "").toLowerCase().includes(info.op.operationId.toLowerCase())) {
+            if (info.op.operationId && normalizedFilepath.includes(info.op.operationId.toLowerCase())) {
                 matchedId = id;
                 break;
             }
@@ -748,12 +1047,9 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
 
         // 2. Try match with route and method
         if (!matchedId) {
-              /* v8 ignore next 10 */ for (const [id, info] of operations) {
-                  /* v8 ignore next */ const routeSlug = info.route.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-                if (
-                      /* v8 ignore next */ (file.filepath || "").toLowerCase().includes(routeSlug) &&
-                      /* v8 ignore next */ (file.filepath || "").toLowerCase().includes(info.method.toLowerCase())
-                ) {
+            for (const [id, info] of operations) {
+                const routeSlug = info.route.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+                if (normalizedFilepath.includes(routeSlug) && normalizedFilepath.includes(info.method.toLowerCase())) {
                     matchedId = id;
                     break;
                 }
@@ -761,8 +1057,9 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
         }
 
         if (matchedId) {
-            if (!docData.codeExamples[matchedId]) docData.codeExamples[matchedId] = [];
-            docData.codeExamples[matchedId]!.push(file);
+            const list = docData.codeExamples[matchedId] ?? [];
+            list.push(file);
+            docData.codeExamples[matchedId] = list;
         }
     }
 }

@@ -16,7 +16,7 @@ jobs:
 
         steps:
             - name: Checkout repository
-              uses: actions/checkout@v6
+              uses: actions/checkout@v7
 
             - name: Use Node.js LTS
               uses: actions/setup-node@v6
@@ -40,11 +40,21 @@ jobs:
               run: |
                   git diff --exit-code README.md || (echo "README.md badges are out of date! Please run your pre-commit hooks locally and push." && exit 1)
 
+            - name: Build Linux x86_64 Executable (Node SEA)
+              if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+              run: |
+                  npx esbuild src/cli.ts --bundle --outfile=dist/cli-cjs.cjs --platform=node --format=cjs
+                  echo '{"main": "dist/cli-cjs.cjs", "output": "sea-prep.blob", "disableExperimentalSEAWarning": true}' > sea-config.json
+                  node --experimental-sea-config sea-config.json
+                  cp $(which node) dist/cdd-docs-cli-linux-x64
+                  npx postject dist/cdd-docs-cli-linux-x64 NODE_SEA_BLOB sea-prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+                  chmod +x dist/cdd-docs-cli-linux-x64
+
             - name: Upload Artifacts (Version Tag)
               if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
               uses: ncipollo/release-action@v1
               with:
-                  artifacts: "dist/bundle.js,dist/cli.js"
+                  artifacts: "dist/bundle.js,dist/cli.js,dist/cdd-docs-cli-linux-x64"
                   allowUpdates: true
                   replacesArtifacts: true
 

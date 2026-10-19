@@ -19,9 +19,9 @@
         "noImplicitThis": true,
         "useUnknownInCatchVariables": true,
         "alwaysStrict": true,
-        "noUnusedLocals": false,
-        "noUnusedParameters": false,
-        "exactOptionalPropertyTypes": false,
+        "noUnusedLocals": true,
+        "noUnusedParameters": true,
+        "exactOptionalPropertyTypes": true,
         "noImplicitReturns": true,
         "noFallthroughCasesInSwitch": true,
         "noUncheckedIndexedAccess": true,
@@ -31,5 +31,5 @@
         "experimentalDecorators": true,
         "useDefineForClassFields": false
     },
-    "include": ["src/**/*", "bin/**/*", "tests/**/*"]
+    "include": ["src/**/*", "tests/**/*"]
 }

@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/SamuelMarks/cdd-docs-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/SamuelMarks/cdd-docs-ui/actions/workflows/ci.yml)
 
-A strictly-typed TypeScript dual-mode documentation tool for generating API documentation based on OpenAPI specifications and code snippets from the `cdd` (Compiler Driven Development) toolchain. It can operate as an AOT (Ahead-of-Time) static site generator or as a client-side Custom Web Component Single Page Application (SPA).
+A strictly-typed TypeScript dual-mode documentation tool for generating API and workflow documentation based on **OpenAPI 3.2.0**, **Swagger 2.0**, and **Arazzo 1.1.0** specifications and code snippets from the `cdd` (Compiler Driven Development) toolchain (`cdd-c`, `cdd-cpp`, `cdd-csharp`, `cdd-go`, `cdd-java`, `cdd-kotlin`, `cdd-php`, `cdd-python-all`, `cdd-ruby`, `cdd-rust`, `cdd-sh`, `cdd-swift`, `cdd-ts`). It can operate as an AOT (Ahead-of-Time) static site generator or as a client-side Custom Web Component Single Page Application (SPA).
 
 ## Architecture Diagram
 
@@ -27,7 +27,7 @@ flowchart TD
     classDef highlight font-family:'Google Sans Medium',fill:#ea4335,color:#ffffff,stroke:#20344b,stroke-width:2px
     classDef terminal font-family:'Google Sans Medium',fill:#20344b,color:#57caff,stroke:#57caff,stroke-width:2px
 
-    A[OpenAPI Spec]:::subhead
+    A[OpenAPI 3.2 / Swagger 2.0 / Arazzo 1.1.0 Spec]:::subhead
     B(AOT CLI Generator):::headline
     B2(Web Component SPA):::headline
     C{cdd-ctl Rust CLI}:::highlight
@@ -50,10 +50,11 @@ flowchart TD
 ## Features
 
 - **Dual-Mode Architecture:** Can be used as a CLI tool (`cdd-docs-cli`) to generate purely static HTML using TypeScript string literals and `marked`, or as a browser-native Web Component (`<cdd-api-docs>`).
+- **OpenAPI 3.2.0, Swagger 2.0 & Arazzo 1.1.0 Support:** Parses, normalizes, and renders OpenAPI 3.2.0 (`paths`, `webhooks`, `additionalOperations`, `QUERY` method, `$self`, `itemSchema`, `prefixEncoding`, `itemEncoding`), Swagger 2.0, and Arazzo 1.1.0 multi-step workflows (`sourceDescriptions`, `workflows`, `dependsOn` DAGs, `steps`, `inputs`, `outputs`, `successCriteria`, `onSuccess`, `onFailure`, `components`, and runtime expressions).
 - **100% Test Coverage:** Rigorously tested core logic.
 - **Strict TypeScript:** No `any` or `unknown` types.
 - **Progressive Enhancement (AOT Mode):** Generates pure static HTML for fast load times and SEO. Enhances with Vanilla JS for dynamic, no-reload language switching.
-- **Direct Web Component Integration (SPA Mode):** The `<cdd-api-docs>` component accepts attribute (`spec-content`, `theme`) and property (`sdkExamples`) bindings for deep integration with frontend frameworks like Angular in `cdd-web-ui`.
+- **Direct Web Component Integration (SPA Mode):** The `<cdd-api-docs>` component accepts attribute (`spec-content`, `arazzo-content`, `theme`) and property (`sdkExamples`) bindings for deep integration with frontend frameworks like Angular in `cdd-web-ui`.
 - **WASM & Offline-First Compatibility:** In SPA mode, seamlessly renders code snippets generated entirely offline via WebAssembly by parent applications like `cdd-web-ui`.
 - **Legacy postMessage Integration:** Still supports `postMessage` integration to sync states with parent iframes when native component bindings are not viable.
 - **Variant Support:** Supports and dynamically renders snippets with or without imports and code-wrapping via the underlying `cdd-ctl` integrations.

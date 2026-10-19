@@ -107,3 +107,5 @@ target/
 node_modules/
 dist/
 .env
+sea-config.json
+sea-prep.blob

@@ -5,8 +5,16 @@
 import { describe, it, expect } from 'vitest';
 import {
     generateAOTHtml,
+    generateAOTBodyAndStyles,
     renderMarkdown,
     escapeHtml,
+    sanitizeUrl,
+    sanitizeCssIdent,
+    interpolateServerVariables,
+    resolveParameterRef,
+    resolveOperationParameters,
+    resolveRequestBodyRef,
+    resolveResponseRef,
     generateCurl,
     renderSchema,
     renderArazzoValue,
@@ -38,9 +46,12 @@ describe('renderMarkdown', () => {
         expect(renderMarkdown('[link](https://example.com)').trim()).toBe(
             '<p><a href="https://example.com">link</a></p>',
         );
-        const nl = String.fromCharCode(10);
-        expect(renderMarkdown(`line1${nl}${nl}line2`).trim()).toBe(`<p>line1</p>${nl}<p>line2</p>`);
-        expect(renderMarkdown(`line1${nl}line2`).trim()).toBe(`<p>line1${nl}line2</p>`);
+        expect(renderMarkdown('line1\n\nline2').trim()).toBe('<p>line1</p>\n<p>line2</p>');
+        expect(renderMarkdown('line1\nline2').trim()).toBe('<p>line1\nline2</p>');
+        expect(renderMarkdown('<script>alert(1)</script><p onclick="bad()">safe</p>[bad](javascript:alert(1))')).not.toContain('<script>');
+        expect(renderMarkdown('<p onclick="bad()">safe</p>')).not.toContain('onclick');
+        expect(renderMarkdown('[bad](javascript:alert(1))')).toContain('href="#"');
+        expect(renderMarkdown("<a href='javascript:alert(1)'>bad</a>")).toContain("href='#'");
     });
 
     it('should not break links when using italics', () => {
@@ -350,7 +361,7 @@ components:
           type: string
 `;
         const html = generateAOTHtml(yamlStr);
-        expect(html).toContain('Profile');
+        expect(html).toContain('<span class="cdd-schema-ref">Profile</span>');
     });
 
     it('should handle request body and headers in generateCurl and Try It Out', () => {
@@ -636,6 +647,7 @@ components:
 `;
         const html = generateAOTHtml(yamlStr);
         expect(html).toContain('EmptyType');
+        expect(html).toContain('<span class="cdd-prop-type">object</span>');
     });
 
     it('should handle full arrays and primitive schemas', () => {
@@ -669,22 +681,54 @@ info:
   version: 1.0.0
 paths:
   /test:
+    parameters:
+      - name: sharedParam
+        in: header
+        schema:
+          type: string
     post:
       parameters:
         - $ref: "#/components/parameters/Test"
+        - $ref: "#/components/parameters/MissingParam"
       requestBody:
         $ref: "#/components/requestBodies/Test"
+      responses:
+        "200":
+          $ref: "#/components/responses/OkResp"
+        "404":
+          $ref: "#/components/responses/MissingResp"
 components:
   parameters:
     Test:
       name: test
       in: query
+      schema:
+        type: string
   requestBodies:
     Test:
       description: test body
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              fieldA:
+                type: string
+  responses:
+    OkResp:
+      description: Resolved OK response
+      content:
+        application/json:
+          schema:
+            type: string
 `;
         const html = generateAOTHtml(yamlStr);
-        expect(html).toContain('/test');
+        expect(html).toContain('post-/test-param-test');
+        expect(html).toContain('post-/test-param-sharedParam');
+        expect(html).toContain('try-post-/test-body');
+        expect(html).toContain('test body');
+        expect(html).toContain('fieldA');
+        expect(html).toContain('Resolved OK response');
     });
 
     it('should inject live reload script when requested', () => {
@@ -885,7 +929,7 @@ webhooks:
         expect(combinedHtml).toContain('language-typescript');
         expect(combinedHtml).toContain('language-bash');
 
-        // Also test renderWorkflowSection directly with custom linkedTarget without anchorId or method
+        // Also test renderWorkflowSection directly with custom linkedTarget without anchorId or method and hasCycles
         const customSection = renderWorkflowSection(
             {
                 workflow: { workflowId: 'customWf', steps: [{ stepId: 'cs1' }, { stepId: 'cs2' }, { stepId: 'cs3' }] },
@@ -919,10 +963,79 @@ webhooks:
                     },
                 ],
                 cliPreview: 'curl custom',
+                hasCycles: true,
             },
             { spec: { openapi: '3.2.0', info: { title: 'T', version: '1' } }, codeExamples: {} },
             ['javascript'],
         );
         expect(customSection).toContain('customWf');
+        expect(customSection).toContain('<span class="cdd-badge cdd-badge-get">OP</span>');
+        expect(customSection).toContain('WORKFLOW: ');
+        expect(customSection).toContain('SEND ');
+        expect(customSection).toContain('DAG CYCLE DETECTED');
+
+        // Test sanitizeUrl, sanitizeCssIdent, interpolateServerVariables, and ref resolvers
+        expect(sanitizeUrl('javascript:alert(1)')).toBe('#');
+        expect(sanitizeUrl('vbscript:msgbox(1)')).toBe('#');
+        expect(sanitizeUrl('data:text/html,<script>alert(1)</script>')).toBe('#');
+        expect(sanitizeUrl('https://safe.example.com/terms')).toBe('https://safe.example.com/terms');
+        expect(sanitizeCssIdent('python-3.12; color: red')).toBe('python-312colorred');
+
+        expect(interpolateServerVariables(undefined)).toBe('https://api.example.com');
+        expect(
+            interpolateServerVariables({
+                url: 'https://{env}.example.com:{port}/v1',
+                variables: {
+                    env: { default: 'staging' },
+                    port: { default: '8443' },
+                },
+            }),
+        ).toBe('https://staging.example.com:8443/v1');
+
+        expect(resolveParameterRef({ $ref: 'bareParamRef' }, {})).toBeUndefined();
+        expect(resolveRequestBodyRef({ $ref: 'bareRbRef' }, {})).toBeUndefined();
+        expect(resolveResponseRef(undefined, {})).toBeUndefined();
+        expect(resolveResponseRef({ $ref: 'bareRespRef' }, {})).toBeUndefined();
+        expect(resolveOperationParameters(undefined, {})).toEqual([]);
+
+        const serverOverrideYaml = `
+openapi: 3.2.0
+info:
+  title: Server Override API
+  version: 1.0.0
+  termsOfService: javascript:alert(1)
+  contact:
+    name: SecTeam
+    url: javascript:evil()
+paths:
+  /path-srv:
+    servers:
+      - url: https://path.example.com
+    get:
+      responses:
+        "204":
+          description: No Content
+    post:
+      servers:
+        - url: https://op.example.com
+      requestBody:
+        content:
+          text/plain: {}
+      responses:
+        "200":
+          description: OK
+          content:
+            text/plain: {}
+    delete:
+      responses:
+        "404":
+          $ref: "#/components/responses/UnresolvedResp"
+`;
+        const frag = generateAOTBodyAndStyles(serverOverrideYaml);
+        expect(frag.bodyHtml).toContain('data-base-url="https://path.example.com"');
+        expect(frag.bodyHtml).toContain('data-base-url="https://op.example.com"');
+        expect(frag.bodyHtml).toContain('href="#"');
+        expect(frag.bodyHtml).not.toContain('javascript:alert(1)');
+        expect(frag.bodyHtml).not.toContain('javascript:evil()');
     });
 });

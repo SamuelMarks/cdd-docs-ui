@@ -25,7 +25,7 @@ const tsParser = {
             ts.ScriptKind.TS,
         );
 
-        const lines = code.split(String.fromCharCode(10));
+        const lines = code.split('\n');
         const lineStarts = [0];
         for (let i = 0; i < lines.length; i++) {
             lineStarts.push(lineStarts[i] + lines[i].length + 1);
@@ -160,6 +160,38 @@ const strictTsPlugin = {
                                         end: { line: end.line + 1, column: end.character },
                                     },
                                     messageId: 'noAs',
+                                });
+                            }
+                            ts.forEachChild(tsNode, visit);
+                        };
+                        visit(sf);
+                    },
+                };
+            },
+        },
+        'no-non-null-assertion': {
+            meta: {
+                type: 'problem',
+                docs: { description: 'Disallow TypeScript non-null assertions (`!`)' },
+                messages: {
+                    noNonNull: 'Unexpected non-null assertion (`!`). Use explicit null checks or nullish coalescing instead.',
+                },
+            },
+            create(context) {
+                return {
+                    Program(node) {
+                        const sf = node.tsSourceFile;
+                        if (!sf) return;
+                        const visit = tsNode => {
+                            if (ts.isNonNullExpression(tsNode)) {
+                                const start = sf.getLineAndCharacterOfPosition(tsNode.getStart(sf));
+                                const end = sf.getLineAndCharacterOfPosition(tsNode.getEnd());
+                                context.report({
+                                    loc: {
+                                        start: { line: start.line + 1, column: start.character },
+                                        end: { line: end.line + 1, column: end.character },
+                                    },
+                                    messageId: 'noNonNull',
                                 });
                             }
                             ts.forEachChild(tsNode, visit);
@@ -310,6 +342,12 @@ export default [
             'strict-ts/no-type-assertions': 'error',
             'strict-ts/no-coverage-ignore': 'error',
             'strict-ts/require-complete-jsdoc': 'error',
+        },
+    },
+    {
+        files: ['src/**/*.ts'],
+        rules: {
+            'strict-ts/no-non-null-assertion': 'error',
         },
     },
 ];

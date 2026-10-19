@@ -194,7 +194,8 @@ export interface CDDRunOptions {
  */
 export async function runCddCtl(lang: string, specPath: string, options: CDDRunOptions = {}): Promise<string> {
     const cddCtlPath = options.cddCtlPath || './cdd-ctl';
-    const args = [lang, 'to_docs_json', '-i', specPath];
+    const subcommand = LANGUAGE_MAP[lang] ?? lang;
+    const args = [subcommand, 'to_docs_json', '-i', specPath];
 
     if (options.noImports) {
         args.push('--no-imports');
@@ -360,6 +361,8 @@ export async function generateAllSnippets(
                                 content,
                                 includeImports: variant.includeImports,
                                 includeWrapping: variant.includeWrapping,
+                                route,
+                                method: method.toLowerCase(),
                             });
                         }
                     }
@@ -372,6 +375,8 @@ export async function generateAllSnippets(
                                     content,
                                     includeImports: variant.includeImports,
                                     includeWrapping: variant.includeWrapping,
+                                    webhookName: whName,
+                                    method: method.toLowerCase(),
                                 });
                             }
                         }
@@ -384,6 +389,7 @@ export async function generateAllSnippets(
                                 content,
                                 includeImports: variant.includeImports,
                                 includeWrapping: variant.includeWrapping,
+                                workflowId: wfId,
                             });
                         }
                     }

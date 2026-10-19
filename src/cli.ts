@@ -11,8 +11,13 @@ import { fileURLToPath } from 'url';
 import express from 'express';
 import { generateAOTHtml } from './aot-generator';
 import { generateAllSnippets } from './runner';
-import { normalizeSpec } from './parser';
+import { normalizeSpec, isSpecUrl, normalizeSpecUrl } from './parser';
 import { CliConfig } from './types';
+
+/**
+ * Monotonic counter for generating collision-free temporary specification filenames.
+ */
+let tempFileCounter = 0;
 
 /**
  * Current CLI version matching `package.json`.
@@ -106,21 +111,17 @@ export async function generate(config: CliConfig): Promise<boolean> {
         let specContent = '';
         let effectiveSpecPath = specPath;
 
-        const nl = String.fromCharCode(10);
-        const isUrl =
-            /^https?:\/\//i.test(inputSpec) ||
-            (!inputSpec.includes(nl) && inputSpec.includes('/') && !fs.existsSync(resolve(process.cwd(), inputSpec)));
+        const isUrl = isSpecUrl(inputSpec.trim(), () => fs.existsSync(specPath));
 
         if (isUrl) {
-            let url = inputSpec;
-            if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+            const url = normalizeSpecUrl(inputSpec);
             console.log(`Fetching OpenAPI spec from ${url}...`);
             const res = await fetch(url);
             if (!res.ok) {
                 throw new Error(`Failed to fetch spec from URL: ${res.status} ${res.statusText}`);
             }
             specContent = await res.text();
-            tempSpecPath = resolve(os.tmpdir(), '.temp-spec.yaml');
+            tempSpecPath = resolve(os.tmpdir(), `.temp-spec-${process.pid}-${++tempFileCounter}.yaml`);
             effectiveSpecPath = tempSpecPath;
             fs.writeFileSync(effectiveSpecPath, specContent);
         } else {
@@ -131,13 +132,10 @@ export async function generate(config: CliConfig): Promise<boolean> {
         let effectiveArazzoPath: string | undefined;
         if (arazzoSpec) {
             const arazzoLocalPath = resolve(process.cwd(), arazzoSpec);
-            const isArazzoUrl =
-                /^https?:\/\//i.test(arazzoSpec) ||
-                (!arazzoSpec.includes(nl) && arazzoSpec.includes('/') && !fs.existsSync(arazzoLocalPath));
+            const isArazzoUrl = isSpecUrl(arazzoSpec.trim(), () => fs.existsSync(arazzoLocalPath));
 
             if (isArazzoUrl) {
-                let arazzoUrl = arazzoSpec;
-                if (!/^https?:\/\//i.test(arazzoUrl)) arazzoUrl = 'https://' + arazzoUrl;
+                const arazzoUrl = normalizeSpecUrl(arazzoSpec);
                 const arazzoRes = await fetch(arazzoUrl);
                 if (!arazzoRes.ok) {
                     throw new Error(
@@ -145,7 +143,7 @@ export async function generate(config: CliConfig): Promise<boolean> {
                     );
                 }
                 companionArazzoContent = await arazzoRes.text();
-                tempArazzoPath = resolve(os.tmpdir(), '.temp-arazzo.yaml');
+                tempArazzoPath = resolve(os.tmpdir(), `.temp-arazzo-${process.pid}-${++tempFileCounter}.yaml`);
                 effectiveArazzoPath = tempArazzoPath;
                 fs.writeFileSync(effectiveArazzoPath, companionArazzoContent);
             } else {
@@ -250,16 +248,16 @@ export async function startWatchServer(config: CliConfig): Promise<ReturnType<ex
 Detected ${eventType} on ${watchedLabel}, regenerating...`);
             const success = await generate(config);
             if (success) {
-                const nl = String.fromCharCode(10);
-                clients.forEach(client => client.write(`data: reload${nl}${nl}`));
+                clients.forEach(client => client.write('data: reload\n\n'));
             }
             setTimeout(() => {
                 isGenerating = false;
             }, 500);
         };
 
+    const watchers: fs.FSWatcher[] = [];
     if (fs.existsSync(specPath)) {
-        fs.watch(specPath, handleFileWatch(inputSpec));
+        watchers.push(fs.watch(specPath, handleFileWatch(inputSpec)));
     } else {
         console.log(
             `Cannot watch URL or non-existent local file: ${inputSpec}. Watch server is running but file changes won't be detected.`,
@@ -269,8 +267,18 @@ Detected ${eventType} on ${watchedLabel}, regenerating...`);
     if (arazzoSpec) {
         const arazzoLocalPath = resolve(process.cwd(), arazzoSpec);
         if (fs.existsSync(arazzoLocalPath)) {
-            fs.watch(arazzoLocalPath, handleFileWatch(arazzoSpec));
+            watchers.push(fs.watch(arazzoLocalPath, handleFileWatch(arazzoSpec)));
         }
+    }
+
+    if (server && typeof server.on === 'function') {
+        server.on('close', () => {
+            for (const w of watchers) {
+                if (w && typeof w.close === 'function') {
+                    w.close();
+                }
+            }
+        });
     }
 
     return server;

@@ -41,7 +41,7 @@ import {
     STANDARD_HTTP_METHODS,
 } from './types';
 import { transformSwagger2ToOpenAPI3 } from './swagger2';
-import { isArazzoSpec, parseArazzoSpec, normalizeArazzoWorkflows } from './arazzo-parser';
+import { isArazzoSpec, parseArazzoSpec, normalizeArazzoWorkflows, buildWorkflowDag } from './arazzo-parser';
 
 /**
  * Type guard checking if an unknown value is a non-null plain object record.
@@ -53,13 +53,74 @@ export function isRecord(val: unknown): val is Record<string, unknown> {
 }
 
 /**
- * Reconstructs a single code string from a structured code snippet object (`imports`, `wrapperStart` / `wrapper_start`, `snippet` / `code`, `wrapperEnd` / `wrapper_end`).
+ * Checks if a trimmed specification input string represents a remote URL or local gateway path
+ * rather than inline JSON/YAML content or an existing local file path.
+ * @param trimmed The trimmed input string to inspect.
+ * @param fileExistsCheck Optional predicate checking if a local file path exists on disk.
+ * @returns True if the input should be fetched as a URL.
+ */
+export function isSpecUrl(trimmed: string, fileExistsCheck?: (path: string) => boolean): boolean {
+    if (!trimmed) return false;
+    if (/^https?:\/\//i.test(trimmed)) {
+        return true;
+    }
+    if (fileExistsCheck && fileExistsCheck(trimmed)) return false;
+    if (trimmed.startsWith('/')) {
+        return true;
+    }
+    return (
+        !trimmed.includes('\n') &&
+        !trimmed.startsWith('{') &&
+        !trimmed.includes(': ') &&
+        /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/.*)?$/.test(trimmed)
+    );
+}
+
+/**
+ * Normalizes a specification URL string, prepending `https://` when a bare domain path
+ * (e.g. `example.com/spec.yaml`) is supplied instead of an explicit `http://`, `https://`, or `/` prefix.
+ * @param url The raw URL string.
+ * @returns The normalized URL ready for `fetch()`.
+ */
+export function normalizeSpecUrl(url: string): string {
+    const trimmed = url.trim();
+    if (!/^https?:\/\//i.test(trimmed) && !trimmed.startsWith('/')) {
+        return 'https://' + trimmed;
+    }
+    return trimmed;
+}
+
+/**
+ * Metadata fields for associating a `CodeExample` with its target operation, webhook, or workflow.
+ */
+export interface CodeExampleMetadata {
+    /** Explicit operationId for deterministic correlation. */
+    operationId?: string | undefined;
+    /** Explicit HTTP method in lowercase. */
+    method?: string | undefined;
+    /** Explicit route path. */
+    route?: string | undefined;
+    /** Explicit webhook name. */
+    webhookName?: string | undefined;
+    /** Explicit Arazzo workflowId. */
+    workflowId?: string | undefined;
+}
+
+/**
+ * Reconstructs a single code string from a structured code snippet object (`imports`, `wrapperStart` / `wrapper_start`, `snippet` / `code`, `wrapperEnd` / `wrapper_end`),
+ * optionally filtering whether imports or wrapper lines are included.
  * @param codeRec The structured code record.
+ * @param includeImports Whether to include the `imports` section (defaults to `true`).
+ * @param includeWrapping Whether to include `wrapperStart` and `wrapperEnd` sections (defaults to `true`).
  * @returns The assembled code snippet string.
  */
-export function assembleStructuredCodeSnippet(codeRec: Record<string, unknown>): string {
+export function assembleStructuredCodeSnippet(
+    codeRec: Record<string, unknown>,
+    includeImports: boolean = true,
+    includeWrapping: boolean = true,
+): string {
     if (typeof codeRec['default'] === 'object' && isRecord(codeRec['default'])) {
-        return assembleStructuredCodeSnippet(codeRec['default']);
+        return assembleStructuredCodeSnippet(codeRec['default'], includeImports, includeWrapping);
     }
     const parts: string[] = [];
     const imports = codeRec['imports'];
@@ -67,12 +128,138 @@ export function assembleStructuredCodeSnippet(codeRec: Record<string, unknown>):
     const snippet = codeRec['snippet'] ?? codeRec['code'];
     const wrapperEnd = codeRec['wrapperEnd'] ?? codeRec['wrapper_end'];
 
-    if (typeof imports === 'string' && imports.trim()) parts.push(imports.trim());
-    if (typeof wrapperStart === 'string' && wrapperStart.trim()) parts.push(wrapperStart.trim());
+    if (includeImports && typeof imports === 'string' && imports.trim()) parts.push(imports.trim());
+    if (includeWrapping && typeof wrapperStart === 'string' && wrapperStart.trim()) parts.push(wrapperStart.trim());
     if (typeof snippet === 'string' && snippet.trim()) parts.push(snippet.trim());
-    if (typeof wrapperEnd === 'string' && wrapperEnd.trim()) parts.push(wrapperEnd.trim());
+    if (includeWrapping && typeof wrapperEnd === 'string' && wrapperEnd.trim()) parts.push(wrapperEnd.trim());
 
-    return parts.join(String.fromCharCode(10));
+    return parts.join('\n');
+}
+
+/**
+ * Expands a structured code snippet record (`imports`, `wrapperStart`, `snippet`, `wrapperEnd`) into
+ * either 4 toggleable `CodeExample` variants (when imports or wrapping fields are present) or a single
+ * `CodeExample` (when only `snippet`/`code` is present).
+ * @param codeRec The structured code record.
+ * @param language The target programming language.
+ * @param filepath The synthetic filepath slug.
+ * @param meta Optional explicit correlation metadata (`operationId`, `method`, `route`, `webhookName`, `workflowId`).
+ * @returns Array of expanded `CodeExample` items.
+ */
+export function expandStructuredCodeVariants(
+    codeRec: Record<string, unknown>,
+    language: string,
+    filepath: string,
+    meta: CodeExampleMetadata = {},
+): CodeExample[] {
+    const targetRec =
+        typeof codeRec['default'] === 'object' && isRecord(codeRec['default']) ? codeRec['default'] : codeRec;
+    const hasImports = typeof targetRec['imports'] === 'string' && targetRec['imports'].trim().length > 0;
+    const wrapperStart = targetRec['wrapperStart'] ?? targetRec['wrapper_start'];
+    const wrapperEnd = targetRec['wrapperEnd'] ?? targetRec['wrapper_end'];
+    const hasWrapping =
+        (typeof wrapperStart === 'string' && wrapperStart.trim().length > 0) ||
+        (typeof wrapperEnd === 'string' && wrapperEnd.trim().length > 0);
+
+    if (!hasImports && !hasWrapping) {
+        const assembled = assembleStructuredCodeSnippet(targetRec, true, true);
+        if (!assembled) return [];
+        return [
+            {
+                language,
+                filepath,
+                content: assembled,
+                includeImports: false,
+                includeWrapping: false,
+                ...meta,
+            },
+        ];
+    }
+
+    const variants: Array<{
+        /** Whether to include import statements in this variant. */
+        includeImports: boolean;
+        /** Whether to include wrapper lines in this variant. */
+        includeWrapping: boolean;
+    }> = [
+        { includeImports: true, includeWrapping: true },
+        { includeImports: false, includeWrapping: true },
+        { includeImports: true, includeWrapping: false },
+        { includeImports: false, includeWrapping: false },
+    ];
+
+    const out: CodeExample[] = [];
+    for (const v of variants) {
+        const assembled = assembleStructuredCodeSnippet(targetRec, v.includeImports, v.includeWrapping);
+        out.push({
+            language,
+            filepath,
+            content: assembled,
+            includeImports: v.includeImports,
+            includeWrapping: v.includeWrapping,
+            ...meta,
+        });
+    }
+    return out;
+}
+
+/**
+ * Extracts `CodeExample` items from a `CDDOutput`-shaped record (`endpoints`, `webhooks`, `workflows`).
+ * @param rec The record containing `endpoints`, `webhooks`, and/or `workflows`.
+ * @param lang The programming language identifier.
+ * @returns Array of extracted `CodeExample` objects.
+ */
+export function extractExamplesFromCddOutputRecord(rec: Record<string, unknown>, lang: string): CodeExample[] {
+    const out: CodeExample[] = [];
+    const extractRouteMap = (routeMap: Record<string, unknown>, isWebhook: boolean): void => {
+        for (const [routePath, methods] of Object.entries(routeMap)) {
+            if (!isRecord(methods)) continue;
+            for (const [method, snippet] of Object.entries(methods)) {
+                const filepath = `${routePath.replace(/[^a-zA-Z0-9]/g, '_')}_${method.toLowerCase()}`;
+                const meta: CodeExampleMetadata = isWebhook
+                    ? { webhookName: routePath, method: method.toLowerCase() }
+                    : { route: routePath, method: method.toLowerCase() };
+                if (typeof snippet === 'string') {
+                    out.push({
+                        language: lang,
+                        filepath,
+                        content: snippet,
+                        includeImports: false,
+                        includeWrapping: false,
+                        ...meta,
+                    });
+                } else if (isRecord(snippet)) {
+                    out.push(...expandStructuredCodeVariants(snippet, lang, filepath, meta));
+                }
+            }
+        }
+    };
+
+    if (isRecord(rec['endpoints'])) {
+        extractRouteMap(rec['endpoints'], false);
+    }
+    if (isRecord(rec['webhooks'])) {
+        extractRouteMap(rec['webhooks'], true);
+    }
+    if (isRecord(rec['workflows'])) {
+        for (const [wfId, snippet] of Object.entries(rec['workflows'])) {
+            const filepath = `workflow_${wfId}`;
+            const meta: CodeExampleMetadata = { workflowId: wfId };
+            if (typeof snippet === 'string') {
+                out.push({
+                    language: lang,
+                    filepath,
+                    content: snippet,
+                    includeImports: false,
+                    includeWrapping: false,
+                    ...meta,
+                });
+            } else if (isRecord(snippet)) {
+                out.push(...expandStructuredCodeVariants(snippet, lang, filepath, meta));
+            }
+        }
+    }
+    return out;
 }
 
 /**
@@ -864,6 +1051,7 @@ export function normalizeSpec(specContent: string, companionArazzoContent?: stri
     if (isArazzoSpec(parsed)) {
         const arazzoSpec = parseArazzoSpec(specContent);
         const workflows = normalizeArazzoWorkflows(arazzoSpec);
+        const workflowDag = buildWorkflowDag(arazzoSpec);
         const spec: OpenAPI320 = {
             openapi: '3.2.0',
             info: {
@@ -884,6 +1072,7 @@ export function normalizeSpec(specContent: string, companionArazzoContent?: stri
             workflows,
             sourceDescriptions: arazzoSpec.sourceDescriptions,
             workflowCodeExamples: {},
+            workflowDag,
         };
     }
 
@@ -921,6 +1110,7 @@ export function normalizeSpec(specContent: string, companionArazzoContent?: stri
     if (companionArazzoContent && companionArazzoContent.trim()) {
         const arazzoSpec = parseArazzoSpec(companionArazzoContent);
         const workflows = normalizeArazzoWorkflows(arazzoSpec, spec);
+        const workflowDag = buildWorkflowDag(arazzoSpec);
         return {
             specKind: 'combined',
             spec,
@@ -929,6 +1119,7 @@ export function normalizeSpec(specContent: string, companionArazzoContent?: stri
             workflows,
             sourceDescriptions: arazzoSpec.sourceDescriptions,
             workflowCodeExamples: {},
+            workflowDag,
         };
     }
 
@@ -970,6 +1161,8 @@ interface OperationEntry {
     method: string;
     /** The parsed OpenAPI operation object. */
     op: OperationObject;
+    /** Whether this operation originates from `spec.webhooks`. */
+    isWebhook: boolean;
 }
 
 /**
@@ -985,7 +1178,7 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
             if (isReference(pathItem)) continue;
             for (const [method, op] of getPathOperations(pathItem)) {
                 const id = op.operationId || `${method}-${route}`;
-                operationMap[id] = { route, method, op };
+                operationMap[id] = { route, method, op, isWebhook: false };
             }
         }
     }
@@ -995,13 +1188,21 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
             if (isReference(pathItem)) continue;
             for (const [method, op] of getPathOperations(pathItem)) {
                 const id = op.operationId || `webhook-${method}-${webhookName}`;
-                operationMap[id] = { route: webhookName, method, op };
+                operationMap[id] = { route: webhookName, method, op, isWebhook: true };
             }
         }
     }
 
     const operations = Object.entries(operationMap);
+    const operationsByOpIdLength = [...operations].sort(
+        (a, b) => (b[1].op.operationId?.length ?? 0) - (a[1].op.operationId?.length ?? 0),
+    );
+    const operationsByRouteLength = [...operations].sort((a, b) => b[1].route.length - a[1].route.length);
+
     const workflows = docData.workflows ?? [];
+    const workflowsByIdLength = [...workflows].sort(
+        (a, b) => b.workflow.workflowId.length - a.workflow.workflowId.length,
+    );
 
     for (const file of generatedFiles) {
         const normalizedFilepath = file.filepath.toLowerCase();
@@ -1009,17 +1210,21 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
         // Check if this example matches an Arazzo workflow first
         if (workflows.length > 0) {
             let matchedWfId: string | null = null;
-            for (const nw of workflows) {
-                const wfId = nw.workflow.workflowId;
-                const wfSlug = wfId.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
-                if (
-                    normalizedFilepath === `workflow_${wfId.toLowerCase()}` ||
-                    normalizedFilepath === `workflow_${wfSlug}` ||
-                    normalizedFilepath.includes(`_workflows_${wfSlug}`) ||
-                    normalizedFilepath.includes(wfId.toLowerCase())
-                ) {
-                    matchedWfId = wfId;
-                    break;
+            if (file.workflowId && workflows.some(nw => nw.workflow.workflowId === file.workflowId)) {
+                matchedWfId = file.workflowId;
+            } else {
+                for (const nw of workflowsByIdLength) {
+                    const wfId = nw.workflow.workflowId;
+                    const wfSlug = wfId.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
+                    if (
+                        normalizedFilepath === `workflow_${wfId.toLowerCase()}` ||
+                        normalizedFilepath === `workflow_${wfSlug}` ||
+                        normalizedFilepath.includes(`_workflows_${wfSlug}`) ||
+                        normalizedFilepath.includes(wfId.toLowerCase())
+                    ) {
+                        matchedWfId = wfId;
+                        break;
+                    }
                 }
             }
             if (matchedWfId) {
@@ -1037,17 +1242,33 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
 
         let matchedId: string | null = null;
 
-        // 1. Try match with operationId
-        for (const [id, info] of operations) {
-            if (info.op.operationId && normalizedFilepath.includes(info.op.operationId.toLowerCase())) {
-                matchedId = id;
-                break;
+        // 0. Try explicit metadata match first
+        if (file.operationId && operationMap[file.operationId]) {
+            matchedId = file.operationId;
+        } else if ((file.webhookName || file.route) && file.method) {
+            const isWh = Boolean(file.webhookName);
+            const targetRoute = file.webhookName || file.route;
+            for (const [id, info] of operations) {
+                if (info.isWebhook === isWh && info.route === targetRoute && info.method === file.method.toLowerCase()) {
+                    matchedId = id;
+                    break;
+                }
             }
         }
 
-        // 2. Try match with route and method
+        // 1. Try match with operationId (sorted longest first so 'getUserProfile' matches before 'get')
         if (!matchedId) {
-            for (const [id, info] of operations) {
+            for (const [id, info] of operationsByOpIdLength) {
+                if (info.op.operationId && normalizedFilepath.includes(info.op.operationId.toLowerCase())) {
+                    matchedId = id;
+                    break;
+                }
+            }
+        }
+
+        // 2. Try match with route and method (sorted longest route first)
+        if (!matchedId) {
+            for (const [id, info] of operationsByRouteLength) {
                 const routeSlug = info.route.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
                 if (normalizedFilepath.includes(routeSlug) && normalizedFilepath.includes(info.method.toLowerCase())) {
                     matchedId = id;

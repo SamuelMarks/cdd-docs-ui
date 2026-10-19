@@ -8,6 +8,10 @@ import {
     mapSdkExamples,
     isReference,
     isRecord,
+    isSpecUrl,
+    normalizeSpecUrl,
+    expandStructuredCodeVariants,
+    extractExamplesFromCddOutputRecord,
     toJsonValue,
     parseInfo,
     parseServer,
@@ -1014,7 +1018,7 @@ describe('OpenAPI 3.2.0 extensions & path item details', () => {
                 '    additionalOperations:',
                 '      SUBSCRIBE:',
                 '        operationId: subscribeOp',
-            ].join(String.fromCharCode(10)),
+            ].join('\n'),
         );
         expect(doc.spec.info.summary).toBe('Info summary');
         const testPath = assertNotRef<PathItemObject>(doc.spec.paths?.['/test']);
@@ -1026,5 +1030,126 @@ describe('OpenAPI 3.2.0 extensions & path item details', () => {
         expect(testPath.additionalOperations?.['SUBSCRIBE']?.operationId).toBe('subscribeOp');
         const mediaType = assertNotRef<MediaTypeObject>(doc.spec.components?.mediaTypes?.['myMediaType']);
         expect(mediaType.prefixEncoding?.['myProp']?.contentType).toBe('text/plain');
+    });
+
+    it('should classify and normalize URLs, expand structured code variants, and avoid substring collisions in mapSdkExamples', () => {
+        expect(isSpecUrl('')).toBe(false);
+        expect(isSpecUrl('spec.yaml', () => true)).toBe(false);
+        expect(isSpecUrl('https://example.com/spec.yaml')).toBe(true);
+        expect(isSpecUrl('/cdd-gateway/storage/org/repo/schema.json')).toBe(true);
+        expect(isSpecUrl('example.com/spec.yaml')).toBe(true);
+        expect(isSpecUrl('openapi: 3.2.0\ninfo:\n  title: T')).toBe(false);
+        expect(isSpecUrl('{"openapi": "3.2.0"}')).toBe(false);
+
+        expect(normalizeSpecUrl('https://example.com/spec.yaml')).toBe('https://example.com/spec.yaml');
+        expect(normalizeSpecUrl('/cdd-gateway/spec.json')).toBe('/cdd-gateway/spec.json');
+        expect(normalizeSpecUrl('example.com/spec.yaml')).toBe('https://example.com/spec.yaml');
+
+        expect(expandStructuredCodeVariants({}, 'python', 'empty_get')).toEqual([]);
+        const singleVariant = expandStructuredCodeVariants({ snippet: 'print(1)' }, 'python', 'single_get');
+        expect(singleVariant).toHaveLength(1);
+        expect(singleVariant[0]?.includeImports).toBe(false);
+
+        const wrapperEndOnly = expandStructuredCodeVariants(
+            { snippet: 'print(1)', wrapperEnd: 'main()' },
+            'python',
+            'wrap_end_get',
+        );
+        expect(wrapperEndOnly).toHaveLength(4);
+
+        const fourVariants = expandStructuredCodeVariants(
+            {
+                default: {
+                    imports: 'import os',
+                    wrapperStart: 'def main():',
+                    snippet: '    print(1)',
+                    wrapperEnd: 'main()',
+                },
+            },
+            'python',
+            'four_get',
+            { operationId: 'opFour' },
+        );
+        expect(fourVariants).toHaveLength(4);
+        expect(fourVariants[0]?.operationId).toBe('opFour');
+
+        const extracted = extractExamplesFromCddOutputRecord(
+            {
+                endpoints: {
+                    invalidMethods: 'not-a-record',
+                    '/items': {
+                        get: 'itemsGet()',
+                        post: { imports: 'import a', snippet: 'itemsPost()' },
+                        put: 123,
+                    },
+                },
+                webhooks: {
+                    hookA: {
+                        post: 'hookPost()',
+                    },
+                },
+                workflows: {
+                    wf1: 'wf1Code()',
+                    wf2: { imports: 'import b', snippet: 'wf2Code()' },
+                    wf3: 123,
+                },
+            },
+            'go',
+        );
+        expect(extracted.some(e => e.route === '/items' && e.method === 'get')).toBe(true);
+        expect(extracted.filter(e => e.route === '/items' && e.method === 'post')).toHaveLength(4);
+        expect(extracted.some(e => e.webhookName === 'hookA' && e.method === 'post')).toBe(true);
+        expect(extracted.some(e => e.workflowId === 'wf1')).toBe(true);
+        expect(extracted.filter(e => e.workflowId === 'wf2')).toHaveLength(4);
+
+        const overlapDoc = normalizeSpec(
+            JSON.stringify({
+                openapi: '3.2.0',
+                info: { title: 'Overlap', version: '1.0.0' },
+                paths: {
+                    '/users': {
+                        get: { operationId: 'get', responses: {} },
+                    },
+                    '/users/profile': {
+                        get: { operationId: 'getUserProfile', responses: {} },
+                    },
+                },
+                webhooks: {
+                    userHook: {
+                        post: { responses: {} },
+                    },
+                },
+            }),
+            JSON.stringify({
+                arazzo: '1.1.0',
+                info: { title: 'OverlapWf', version: '1.0.0' },
+                sourceDescriptions: [{ name: 'api', url: './openapi.json' }],
+                workflows: [
+                    { workflowId: 'order', steps: [{ stepId: 's1' }] },
+                    { workflowId: 'orderItem', steps: [{ stepId: 's2' }] },
+                ],
+            }),
+        );
+
+        mapSdkExamples(overlapDoc, [
+            { language: 'ts', filepath: 'sdk_getUserProfile.ts', content: 'profile()' },
+            { language: 'ts', filepath: 'explicit_op.ts', content: 'byOpId()', operationId: 'getUserProfile' },
+            { language: 'ts', filepath: 'explicit_route.ts', content: 'users()', route: '/users', method: 'get' },
+            {
+                language: 'ts',
+                filepath: 'explicit_wh.ts',
+                content: 'wh()',
+                webhookName: 'userHook',
+                method: 'post',
+            },
+            { language: 'ts', filepath: 'explicit_wf.ts', content: 'wfOrder()', workflowId: 'order' },
+            { language: 'ts', filepath: 'workflow_orderItem.ts', content: 'wfOrderItem()' },
+        ]);
+
+        expect(overlapDoc.codeExamples['getUserProfile']?.[0]?.content).toBe('profile()');
+        expect(overlapDoc.codeExamples['get']?.[0]?.content).toBe('users()');
+        expect(overlapDoc.codeExamples['webhook-post-userHook']?.[0]?.content).toBe('wh()');
+        expect(overlapDoc.workflowCodeExamples?.['order']?.[0]?.content).toBe('wfOrder()');
+        expect(overlapDoc.workflowCodeExamples?.['orderItem']?.[0]?.content).toBe('wfOrderItem()');
     });
 });

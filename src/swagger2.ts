@@ -32,6 +32,48 @@ function fixRefs(obj: unknown): void {
 }
 
 /**
+ * Wraps Swagger 2.0 top-level parameter schema attributes (`type`, `format`, `items`, `default`, `enum`, `maximum`, `minimum`)
+ * into an OpenAPI 3.x `schema` sub-object in-place.
+ * @param rawParam The raw parameter record to upgrade.
+ */
+function upgradeSwagger2ParameterSchema(rawParam: Record<string, unknown>): void {
+    if (rawParam['type'] === 'array' && isRecord(rawParam['items'])) {
+        rawParam['schema'] = {
+            type: 'array',
+            items: rawParam['items'],
+            collectionFormat: rawParam['collectionFormat'],
+        };
+    } else if (rawParam['type']) {
+        const paramSchema: Record<string, unknown> = {
+            type: rawParam['type'],
+            format: rawParam['format'],
+        };
+        if (rawParam['default'] !== undefined) paramSchema['default'] = rawParam['default'];
+        if (rawParam['enum'] !== undefined) paramSchema['enum'] = rawParam['enum'];
+        if (rawParam['maximum'] !== undefined) paramSchema['maximum'] = rawParam['maximum'];
+        if (rawParam['minimum'] !== undefined) paramSchema['minimum'] = rawParam['minimum'];
+        rawParam['schema'] = paramSchema;
+    }
+}
+
+/**
+ * Wraps a Swagger 2.0 response `schema` into an OpenAPI 3.x `content` media type map in-place.
+ * @param resp The raw response record to upgrade.
+ * @param produces The list of media types produced.
+ */
+function upgradeSwagger2ResponseSchema(resp: Record<string, unknown>, produces: string[]): void {
+    if (typeof resp['$ref'] === 'string') return;
+    if (resp['schema']) {
+        const contentMap: Record<string, unknown> = {};
+        for (const p of produces) {
+            contentMap[p] = { schema: resp['schema'] };
+        }
+        resp['content'] = contentMap;
+        delete resp['schema'];
+    }
+}
+
+/**
  * Transforms a parsed Swagger 2.0 object into an OpenAPI 3.2.0 compatible structure in-place.
  * It maps root properties like host, basePath, and schemes to servers.
  * It moves definitions, parameters, and responses to the components object.
@@ -57,15 +99,28 @@ export function transformSwagger2ToOpenAPI3(parsed: Record<string, unknown>): vo
     const components: Record<string, unknown> = isRecord(parsed['components']) ? parsed['components'] : {};
     parsed['components'] = components;
 
+    const globalConsumes = Array.isArray(parsed['consumes']) ? parsed['consumes'].map(String) : ['application/json'];
+    const globalProduces = Array.isArray(parsed['produces']) ? parsed['produces'].map(String) : ['application/json'];
+
     if (parsed['definitions']) {
         components['schemas'] = parsed['definitions'];
         delete parsed['definitions'];
     }
-    if (parsed['parameters']) {
+    if (isRecord(parsed['parameters'])) {
+        for (const paramVal of Object.values(parsed['parameters'])) {
+            if (isRecord(paramVal)) {
+                upgradeSwagger2ParameterSchema(paramVal);
+            }
+        }
         components['parameters'] = parsed['parameters'];
         delete parsed['parameters'];
     }
-    if (parsed['responses']) {
+    if (isRecord(parsed['responses'])) {
+        for (const respVal of Object.values(parsed['responses'])) {
+            if (isRecord(respVal)) {
+                upgradeSwagger2ResponseSchema(respVal, globalProduces);
+            }
+        }
         components['responses'] = parsed['responses'];
         delete parsed['responses'];
     }
@@ -105,15 +160,21 @@ export function transformSwagger2ToOpenAPI3(parsed: Record<string, unknown>): vo
 
     fixRefs(parsed);
 
-    const globalConsumes = Array.isArray(parsed['consumes']) ? parsed['consumes'].map(String) : ['application/json'];
-    const globalProduces = Array.isArray(parsed['produces']) ? parsed['produces'].map(String) : ['application/json'];
-
     const paths = parsed['paths'];
     if (isRecord(paths)) {
         for (const [pathKey, pathItem] of Object.entries(paths)) {
             if (!isRecord(pathItem)) {
                 delete paths[pathKey];
                 continue;
+            }
+            if (Array.isArray(pathItem['parameters'])) {
+                const pathParams: Record<string, unknown>[] = [];
+                for (const rawParam of pathItem['parameters']) {
+                    if (!isRecord(rawParam)) continue;
+                    upgradeSwagger2ParameterSchema(rawParam);
+                    pathParams.push(rawParam);
+                }
+                pathItem['parameters'] = pathParams;
             }
             for (const method of STANDARD_HTTP_METHODS) {
                 const op = pathItem[method];
@@ -137,23 +198,7 @@ export function transformSwagger2ToOpenAPI3(parsed: Record<string, unknown>): vo
                         } else if (rawParam['in'] === 'formData') {
                             formParams.push(rawParam);
                         } else {
-                            if (rawParam['type'] === 'array' && isRecord(rawParam['items'])) {
-                                rawParam['schema'] = {
-                                    type: 'array',
-                                    items: rawParam['items'],
-                                    collectionFormat: rawParam['collectionFormat'],
-                                };
-                            } else if (rawParam['type']) {
-                                const paramSchema: Record<string, unknown> = {
-                                    type: rawParam['type'],
-                                    format: rawParam['format'],
-                                };
-                                if (rawParam['default'] !== undefined) paramSchema['default'] = rawParam['default'];
-                                if (rawParam['enum'] !== undefined) paramSchema['enum'] = rawParam['enum'];
-                                if (rawParam['maximum'] !== undefined) paramSchema['maximum'] = rawParam['maximum'];
-                                if (rawParam['minimum'] !== undefined) paramSchema['minimum'] = rawParam['minimum'];
-                                rawParam['schema'] = paramSchema;
-                            }
+                            upgradeSwagger2ParameterSchema(rawParam);
                             newParams.push(rawParam);
                         }
                     }
@@ -202,15 +247,8 @@ export function transformSwagger2ToOpenAPI3(parsed: Record<string, unknown>): vo
                 const responses = op['responses'];
                 if (isRecord(responses)) {
                     for (const resp of Object.values(responses)) {
-                        if (!isRecord(resp) || typeof resp['$ref'] === 'string') continue;
-                        if (resp['schema']) {
-                            const contentMap: Record<string, unknown> = {};
-                            for (const p of produces) {
-                                contentMap[p] = { schema: resp['schema'] };
-                            }
-                            resp['content'] = contentMap;
-                            delete resp['schema'];
-                        }
+                        if (!isRecord(resp)) continue;
+                        upgradeSwagger2ResponseSchema(resp, produces);
                     }
                 }
             }

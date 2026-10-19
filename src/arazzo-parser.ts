@@ -606,6 +606,33 @@ export function parseArazzoSpec(rawSpec: string): Arazzo110 {
 }
 
 /**
+ * Extracts the component key from an Arazzo `$components.<category>.<key>` reference string.
+ * Returns `null` if the reference explicitly targets a different `$components.<otherCategory>` namespace.
+ * @param reference The raw reference string (e.g. `'$components.parameters.authHeader'`).
+ * @param category The expected component category (`'parameters'`, `'successActions'`, `'failureActions'`).
+ * @returns An object with `key` (the leaf name) and `matchesCategory` (whether it is valid for this category).
+ */
+export function extractComponentKey(
+    reference: string,
+    category: 'parameters' | 'successActions' | 'failureActions',
+): {
+    /** The extracted component key name. */
+    key: string;
+    /** True if the reference matches the expected category or is a bare/unprefixed reference. */
+    matchesCategory: boolean;
+} {
+    const prefix = `$components.${category}.`;
+    if (reference.startsWith(prefix)) {
+        return { key: reference.slice(prefix.length), matchesCategory: true };
+    }
+    const lastPart = reference.split('.').pop() || reference;
+    if (reference.startsWith('$components.')) {
+        return { key: lastPart, matchesCategory: false };
+    }
+    return { key: lastPart, matchesCategory: true };
+}
+
+/**
  * Resolves an `ArazzoParameterObject | ReusableObject` against `components.parameters`, applying any `value` override.
  * @param item The parameter or reusable reference object.
  * @param components Optional Arazzo components dictionary.
@@ -618,11 +645,8 @@ export function resolveArazzoReusableParameter(
     if (!isReusableObject(item)) {
         return item;
     }
-    const prefix = '$components.parameters.';
-    const key = item.reference.startsWith(prefix)
-        ? item.reference.slice(prefix.length)
-        : item.reference.split('.').pop() || item.reference;
-    const found = components?.parameters?.[key];
+    const { key, matchesCategory } = extractComponentKey(item.reference, 'parameters');
+    const found = matchesCategory ? components?.parameters?.[key] : undefined;
     if (found) {
         return {
             ...found,
@@ -648,11 +672,8 @@ export function resolveArazzoSuccessAction(
     if (!isReusableObject(item)) {
         return item;
     }
-    const prefix = '$components.successActions.';
-    const key = item.reference.startsWith(prefix)
-        ? item.reference.slice(prefix.length)
-        : item.reference.split('.').pop() || item.reference;
-    const found = components?.successActions?.[key];
+    const { key, matchesCategory } = extractComponentKey(item.reference, 'successActions');
+    const found = matchesCategory ? components?.successActions?.[key] : undefined;
     if (found) {
         return { ...found };
     }
@@ -675,11 +696,8 @@ export function resolveArazzoFailureAction(
     if (!isReusableObject(item)) {
         return item;
     }
-    const prefix = '$components.failureActions.';
-    const key = item.reference.startsWith(prefix)
-        ? item.reference.slice(prefix.length)
-        : item.reference.split('.').pop() || item.reference;
-    const found = components?.failureActions?.[key];
+    const { key, matchesCategory } = extractComponentKey(item.reference, 'failureActions');
+    const found = matchesCategory ? components?.failureActions?.[key] : undefined;
     if (found) {
         return { ...found };
     }
@@ -767,24 +785,23 @@ export function parseRuntimeExpression(expr: string): ParsedRuntimeExpression {
     const referencedSources = new Set<string>();
 
     const stepRegex = /\$steps\.([A-Za-z0-9_-]+)/g;
-    let m: RegExpExecArray | null;
-    while ((m = stepRegex.exec(trimmed)) !== null) {
-        referencedStepIds.add(m[1]!);
+    for (const m of trimmed.matchAll(stepRegex)) {
+        referencedStepIds.add(String(m[1]));
     }
 
     const inputRegex = /\$inputs\.([A-Za-z0-9_-]+)/g;
-    while ((m = inputRegex.exec(trimmed)) !== null) {
-        referencedInputs.add(m[1]!);
+    for (const m of trimmed.matchAll(inputRegex)) {
+        referencedInputs.add(String(m[1]));
     }
 
     const wfRegex = /\$workflows\.([A-Za-z0-9_-]+)/g;
-    while ((m = wfRegex.exec(trimmed)) !== null) {
-        referencedWorkflows.add(m[1]!);
+    for (const m of trimmed.matchAll(wfRegex)) {
+        referencedWorkflows.add(String(m[1]));
     }
 
     const srcRegex = /\$sourceDescriptions\.([A-Za-z0-9_-]+)/g;
-    while ((m = srcRegex.exec(trimmed)) !== null) {
-        referencedSources.add(m[1]!);
+    for (const m of trimmed.matchAll(srcRegex)) {
+        referencedSources.add(String(m[1]));
     }
 
     const hashIdx = trimmed.indexOf('#');
@@ -877,32 +894,42 @@ export function extractStepReferencesFromStep(step: StepObject, mergedParams: Ar
 
 /**
  * Builds the workflow-level and step-level dependency graphs (DAGs) and topological execution orders for an Arazzo document.
- * @param workflows The list of workflows in the Arazzo document.
+ * @param workflowsOrSpec The list of workflows or the full `Arazzo110` specification.
  * @param components Optional Arazzo components dictionary for parameter dereferencing.
  * @returns A `WorkflowDag` containing topological orders, directed edges, and cycle detection status.
  */
-export function buildWorkflowDag(workflows: WorkflowObject[], components?: ArazzoComponentsObject): WorkflowDag {
+export function buildWorkflowDag(
+    workflowsOrSpec: WorkflowObject[] | Arazzo110,
+    components?: ArazzoComponentsObject,
+): WorkflowDag {
+    const workflows = Array.isArray(workflowsOrSpec) ? workflowsOrSpec : workflowsOrSpec.workflows;
+    const resolvedComponents =
+        components ?? (!Array.isArray(workflowsOrSpec) ? workflowsOrSpec.components : undefined);
     const workflowEdges: DagEdge[] = [];
     const stepOrderByWorkflow: Record<string, string[]> = {};
     const stepEdgesByWorkflow: Record<string, DagEdge[]> = {};
     let hasCycles = false;
 
     const wfIds = new Set(workflows.map(w => w.workflowId));
-    const wfAdj = new Map<string, Set<string>>();
-    const wfInDegree = new Map<string, number>();
+    const wfAdj: Array<{
+        /** Source workflow ID. */
+        id: string;
+        /** Outgoing target workflow IDs. */
+        targets: Set<string>;
+        /** Incoming dependency count. */
+        inDegree: number;
+    }> = workflows.map(w => ({ id: w.workflowId, targets: new Set<string>(), inDegree: 0 }));
 
-    for (const wf of workflows) {
-        wfAdj.set(wf.workflowId, new Set());
-        wfInDegree.set(wf.workflowId, 0);
-    }
+    const findWfNode = (id: string) => wfAdj.find(n => n.id === id);
 
     const addWfEdge = (from: string, to: string, kind: DagEdge['kind'], label?: string): void => {
         workflowEdges.push({ from, to, kind, label });
         if (wfIds.has(from) && wfIds.has(to) && from !== to) {
-            const neighbors = wfAdj.get(from)!;
-            if (!neighbors.has(to)) {
-                neighbors.add(to);
-                wfInDegree.set(to, wfInDegree.get(to)! + 1);
+            const fromNode = findWfNode(from);
+            const toNode = findWfNode(to);
+            if (fromNode && toNode && !fromNode.targets.has(to)) {
+                fromNode.targets.add(to);
+                toNode.inDegree += 1;
             }
         }
     };
@@ -910,7 +937,8 @@ export function buildWorkflowDag(workflows: WorkflowObject[], components?: Arazz
     for (const wf of workflows) {
         if (wf.dependsOn) {
             for (const dep of wf.dependsOn) {
-                const cleanDep = dep.includes('.workflows.') ? dep.split('.workflows.')[1]! : dep;
+                const parts = dep.split('.workflows.');
+                const cleanDep = parts[1] ?? dep;
                 addWfEdge(cleanDep, wf.workflowId, 'dependsOn');
             }
         }
@@ -918,40 +946,43 @@ export function buildWorkflowDag(workflows: WorkflowObject[], components?: Arazz
         // Build step-level graph for this workflow
         const stepEdges: DagEdge[] = [];
         const stepIds = new Set(wf.steps.map(s => s.stepId));
-        const stepAdj = new Map<string, Set<string>>();
-        const stepInDegree = new Map<string, number>();
+        const stepNodes: Array<{
+            /** Step ID. */
+            id: string;
+            /** Outgoing target step IDs. */
+            targets: Set<string>;
+            /** Incoming dependency count. */
+            inDegree: number;
+        }> = wf.steps.map(s => ({ id: s.stepId, targets: new Set<string>(), inDegree: 0 }));
 
-        for (const st of wf.steps) {
-            stepAdj.set(st.stepId, new Set());
-            stepInDegree.set(st.stepId, 0);
-        }
+        const findStepNode = (id: string) => stepNodes.find(n => n.id === id);
 
         const addStepDep = (from: string, to: string): void => {
             if (stepIds.has(from) && from !== to) {
-                const neighbors = stepAdj.get(from)!;
-                if (!neighbors.has(to)) {
-                    neighbors.add(to);
-                    stepInDegree.set(to, stepInDegree.get(to)! + 1);
+                const fromNode = findStepNode(from);
+                const toNode = findStepNode(to);
+                if (fromNode && toNode && !fromNode.targets.has(to)) {
+                    fromNode.targets.add(to);
+                    toNode.inDegree += 1;
                 }
             }
         };
 
-        for (let i = 0; i < wf.steps.length; i++) {
-            const st = wf.steps[i]!;
-            if (i > 0) {
-                const prev = wf.steps[i - 1]!;
-                stepEdges.push({ from: prev.stepId, to: st.stepId, kind: 'sequential' });
-                addStepDep(prev.stepId, st.stepId);
+        let prevStepId: string | undefined;
+        for (const st of wf.steps) {
+            if (prevStepId !== undefined) {
+                stepEdges.push({ from: prevStepId, to: st.stepId, kind: 'sequential' });
+                addStepDep(prevStepId, st.stepId);
             }
+            prevStepId = st.stepId;
 
             if (st.workflowId) {
-                const targetWf = st.workflowId.includes('.workflows.')
-                    ? st.workflowId.split('.workflows.')[1]!
-                    : st.workflowId;
+                const wfParts = st.workflowId.split('.workflows.');
+                const targetWf = wfParts[1] ?? st.workflowId;
                 addWfEdge(targetWf, wf.workflowId, 'subWorkflow', st.stepId);
             }
 
-            const mergedParams = mergeWorkflowAndStepParameters(wf.parameters, st.parameters, components);
+            const mergedParams = mergeWorkflowAndStepParameters(wf.parameters, st.parameters, resolvedComponents);
             const upstream = extractStepReferencesFromStep(st, mergedParams);
             for (const upId of upstream) {
                 const kind: DagEdge['kind'] = st.dependsOn?.includes(upId) ? 'dependsOn' : 'dataFlow';
@@ -961,7 +992,7 @@ export function buildWorkflowDag(workflows: WorkflowObject[], components?: Arazz
 
             if (st.onSuccess) {
                 for (const rawAct of st.onSuccess) {
-                    const act = resolveArazzoSuccessAction(rawAct, components);
+                    const act = resolveArazzoSuccessAction(rawAct, resolvedComponents);
                     if (act.type === 'goto' && act.stepId) {
                         stepEdges.push({ from: st.stepId, to: act.stepId, kind: 'onSuccess', label: act.name });
                     }
@@ -970,7 +1001,7 @@ export function buildWorkflowDag(workflows: WorkflowObject[], components?: Arazz
 
             if (st.onFailure) {
                 for (const rawAct of st.onFailure) {
-                    const act = resolveArazzoFailureAction(rawAct, components);
+                    const act = resolveArazzoFailureAction(rawAct, resolvedComponents);
                     if ((act.type === 'goto' || act.type === 'retry') && act.stepId) {
                         stepEdges.push({ from: st.stepId, to: act.stepId, kind: 'onFailure', label: act.name });
                     }
@@ -979,22 +1010,20 @@ export function buildWorkflowDag(workflows: WorkflowObject[], components?: Arazz
         }
 
         // Kahn's topological sort for steps
-        const stepQueue: string[] = [];
-        for (const st of wf.steps) {
-            if (stepInDegree.get(st.stepId) === 0) {
-                stepQueue.push(st.stepId);
-            }
-        }
+        const stepQueue = stepNodes.filter(n => n.inDegree === 0);
         const sortedSteps: string[] = [];
-        while (stepQueue.length > 0) {
-            const curr = stepQueue.shift()!;
-            sortedSteps.push(curr);
-            const neighbors = stepAdj.get(curr)!;
-            for (const nxt of neighbors) {
-                const nextDeg = stepInDegree.get(nxt)! - 1;
-                stepInDegree.set(nxt, nextDeg);
-                if (nextDeg === 0) stepQueue.push(nxt);
+        let currStepNode = stepQueue.shift();
+        while (currStepNode !== undefined) {
+            sortedSteps.push(currStepNode.id);
+            for (const nxtId of currStepNode.targets) {
+                for (const candidate of stepNodes) {
+                    if (candidate.id === nxtId) {
+                        candidate.inDegree -= 1;
+                        if (candidate.inDegree === 0) stepQueue.push(candidate);
+                    }
+                }
             }
+            currStepNode = stepQueue.shift();
         }
 
         if (sortedSteps.length < wf.steps.length) {
@@ -1011,22 +1040,20 @@ export function buildWorkflowDag(workflows: WorkflowObject[], components?: Arazz
     }
 
     // Kahn's topological sort for workflows
-    const wfQueue: string[] = [];
-    for (const wf of workflows) {
-        if (wfInDegree.get(wf.workflowId) === 0) {
-            wfQueue.push(wf.workflowId);
-        }
-    }
+    const wfQueue = wfAdj.filter(n => n.inDegree === 0);
     const workflowOrder: string[] = [];
-    while (wfQueue.length > 0) {
-        const curr = wfQueue.shift()!;
-        workflowOrder.push(curr);
-        const neighbors = wfAdj.get(curr)!;
-        for (const nxt of neighbors) {
-            const nextDeg = wfInDegree.get(nxt)! - 1;
-            wfInDegree.set(nxt, nextDeg);
-            if (nextDeg === 0) wfQueue.push(nxt);
+    let currWfNode = wfQueue.shift();
+    while (currWfNode !== undefined) {
+        workflowOrder.push(currWfNode.id);
+        for (const nxtId of currWfNode.targets) {
+            for (const candidate of wfAdj) {
+                if (candidate.id === nxtId) {
+                    candidate.inDegree -= 1;
+                    if (candidate.inDegree === 0) wfQueue.push(candidate);
+                }
+            }
         }
+        currWfNode = wfQueue.shift();
     }
 
     if (workflowOrder.length < workflows.length) {
@@ -1065,9 +1092,9 @@ export function linkStepToOpenApiOperation(
         let sourceName = defaultSource;
         let wfId = step.workflowId;
         const match = step.workflowId.match(/^\$sourceDescriptions\.([A-Za-z0-9_-]+)\.workflows\.(.+)$/);
-        if (match) {
-            sourceName = match[1]!;
-            wfId = match[2]!;
+        if (match && match[1] && match[2]) {
+            sourceName = match[1];
+            wfId = match[2];
         }
         return {
             kind: 'workflow',
@@ -1105,9 +1132,13 @@ export function linkStepToOpenApiOperation(
 
         if (parsedExpr.jsonPointer) {
             const segments = parsedExpr.jsonPointer.split('/').filter(Boolean).map(unescapeJsonPointer);
-            if ((segments[0] === 'paths' || segments[0] === 'webhooks') && segments.length >= 3) {
-                route = segments[1]!;
-                method = segments[2]!.toLowerCase();
+            if (
+                (segments[0] === 'paths' || segments[0] === 'webhooks') &&
+                segments[1] !== undefined &&
+                segments[2] !== undefined
+            ) {
+                route = segments[1];
+                method = segments[2].toLowerCase();
             }
         }
 
@@ -1139,9 +1170,9 @@ export function linkStepToOpenApiOperation(
         let sourceName = defaultSource;
         let opId = step.operationId;
         const match = step.operationId.match(/^\$sourceDescriptions\.([A-Za-z0-9_-]+)\.(.+)$/);
-        if (match) {
-            sourceName = match[1]!;
-            opId = match[2]!;
+        if (match && match[1] && match[2]) {
+            sourceName = match[1];
+            opId = match[2];
         }
 
         if (openApiSpec?.paths) {
@@ -1212,8 +1243,7 @@ export function generateWorkflowCliPreview(
         lines.push(`# Prerequisites: ${workflow.dependsOn.join(', ')}`);
     }
 
-    for (let i = 0; i < normalizedSteps.length; i++) {
-        const ns = normalizedSteps[i]!;
+    for (const [i, ns] of normalizedSteps.entries()) {
         const st = ns.step;
         lines.push('');
         lines.push(`# Step ${i + 1}: ${st.stepId}${st.description ? ` - ${st.description}` : ''}`);
@@ -1258,7 +1288,7 @@ export function generateWorkflowCliPreview(
         lines.push(cmd);
     }
 
-    return lines.join(String.fromCharCode(10));
+    return lines.join('\n');
 }
 
 /**
@@ -1270,6 +1300,7 @@ export function generateWorkflowCliPreview(
 export function normalizeArazzoWorkflows(arazzoSpec: Arazzo110, openApiSpec?: OpenAPI320): NormalizedWorkflow[] {
     const components = arazzoSpec.components;
     const baseUrl = openApiSpec?.servers?.[0]?.url || 'https://api.example.com';
+    const dag = buildWorkflowDag(arazzoSpec.workflows, components);
 
     return arazzoSpec.workflows.map(wf => {
         const resolvedInputs = resolveWorkflowInputSchema(wf.inputs, components);
@@ -1304,6 +1335,9 @@ export function normalizeArazzoWorkflows(arazzoSpec: Arazzo110, openApiSpec?: Op
             resolvedFailureActions,
             normalizedSteps,
             cliPreview,
+            stepOrder: dag.stepOrderByWorkflow[wf.workflowId],
+            stepEdges: dag.stepEdgesByWorkflow[wf.workflowId],
+            hasCycles: dag.hasCycles,
         };
     });
 }

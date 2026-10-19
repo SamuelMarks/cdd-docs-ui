@@ -4,7 +4,7 @@
  */
 
 import { OpenAPI320 } from './openapi-types';
-import { Arazzo110, NormalizedWorkflow, SourceDescriptionObject } from './arazzo-types';
+import { Arazzo110, NormalizedWorkflow, SourceDescriptionObject, WorkflowDag } from './arazzo-types';
 
 /**
  * Represents an SDK code example.
@@ -20,6 +20,16 @@ export interface CodeExample {
     includeImports?: boolean | undefined;
     /** Whether to include wrapping code (like function definitions) in the displayed example. */
     includeWrapping?: boolean | undefined;
+    /** Optional explicit operationId for deterministic mapping to an OpenAPI or webhook operation. */
+    operationId?: string | undefined;
+    /** Optional explicit HTTP method in lowercase for deterministic mapping. */
+    method?: string | undefined;
+    /** Optional explicit route path for deterministic mapping to an OpenAPI operation. */
+    route?: string | undefined;
+    /** Optional explicit webhook name for deterministic mapping to a webhook operation. */
+    webhookName?: string | undefined;
+    /** Optional explicit Arazzo workflowId for deterministic mapping to a workflow. */
+    workflowId?: string | undefined;
 }
 
 /**
@@ -81,6 +91,8 @@ export interface DocData {
      * A map of Arazzo `workflowId` strings to their corresponding SDK/CLI code examples.
      */
     workflowCodeExamples?: Record<string, CodeExample[]> | undefined;
+    /** Computed dependency graph (DAG) and cycle status for Arazzo workflows and steps. */
+    workflowDag?: WorkflowDag | undefined;
 }
 
 /**

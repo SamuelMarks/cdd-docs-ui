@@ -532,9 +532,10 @@ info:
             expect(el.innerHTML).toContain('Different Paths');
 
             const el2 = createApiDocsElement();
-            el2.innerHTML = '<div class="cdd-layout"></div>';
+            el2.innerHTML =
+                '<div class="cdd-layout"><div class="cdd-sidebar-title">Paths</div><span></span></div>';
             document.body.appendChild(el2);
-            expect(el2.querySelector('.cdd-layout')).not.toBeNull();
+            expect(el2.querySelector('.cdd-search-input')).not.toBeNull();
         });
 
         it('should handle attributeChangedCallback edge cases', () => {
@@ -620,19 +621,58 @@ info:
             expect(el.innerHTML).toContain('No stack');
         });
 
-        it('should handle fallback when generated HTML lacks a body tag', async () => {
+        it('should safely render specs containing literal </body> or </style> strings and discard stale async fetches', async () => {
             const el = createApiDocsElement();
-            const genSpy = vi
-                .spyOn(aotGenerator, 'generateAOTHtml')
-                .mockReturnValueOnce('<div>Fallback Test without body tag</div>');
-
             await el.renderSpec(`openapi: 3.0.0
 info:
-  title: Fallback Test
+  title: Literal Closing Tags API
+  description: "Contains literal \`</body>\` and \`</style>\` strings"
   version: 1.0.0`);
-            genSpy.mockRestore();
+            expect(el.innerHTML).toContain('Literal Closing Tags API');
+            expect(el.innerHTML).toContain('<code>&lt;/body&gt;</code>');
+            expect(el.innerHTML).toContain('<code>&lt;/style&gt;</code>');
 
-            expect(el.innerHTML).toContain('Fallback Test without body tag');
+            // Test stale renderVersion race condition protection on both primary spec fetch and companion Arazzo fetch
+            let resolveSlowPrimary: ((val: unknown) => void) | undefined;
+            global.fetch = vi.fn().mockImplementation(
+                () =>
+                    new Promise(resolve => {
+                        resolveSlowPrimary = resolve;
+                    }),
+            );
+
+            const stalePromise = el.renderSpec('https://example.com/slow.yaml');
+            await el.renderSpec(`openapi: 3.0.0
+info:
+  title: Newer Spec Wins
+  version: 1.0.0`);
+            resolveSlowPrimary?.({
+                ok: true,
+                text: async () => `openapi: 3.0.0\ninfo:\n  title: Stale Spec\n  version: 1.0.0`,
+            });
+            await stalePromise;
+            expect(el.innerHTML).toContain('Newer Spec Wins');
+            expect(el.innerHTML).not.toContain('Stale Spec');
+
+            // Stale companion Arazzo fetch
+            let resolveSlowCompanion: ((val: unknown) => void) | undefined;
+            global.fetch = vi.fn().mockImplementation(
+                () =>
+                    new Promise(resolve => {
+                        resolveSlowCompanion = resolve;
+                    }),
+            );
+            const staleCompanionPromise = el.renderSpec(
+                `openapi: 3.0.0\ninfo:\n  title: Fast Spec\n  version: 1.0.0`,
+                'https://example.com/slow-arazzo.yaml',
+            );
+            await el.renderSpec(`openapi: 3.0.0\ninfo:\n  title: Latest Spec\n  version: 1.0.0`);
+            resolveSlowCompanion?.({
+                ok: true,
+                text: async () => `arazzo: 1.1.0\ninfo:\n  title: Stale Arazzo\n  version: 1.0.0\nsourceDescriptions: []\nworkflows: []`,
+            });
+            await staleCompanionPromise;
+            expect(el.innerHTML).toContain('Latest Spec');
         });
 
         it('should handle dynamic routing (/u/:org/:repo), version dropdown change, versions.json, and Try It Out proxy URL', async () => {
@@ -763,18 +803,28 @@ info:
             });
             const el3 = createApiDocsElement();
             document.body.appendChild(el3);
-            await new Promise(resolve => setTimeout(resolve, 30));
+            await vi.waitFor(() => {
+                expect(el3.querySelector('.cdd-version-select')?.innerHTML).toContain('<option value="1.0.0">1.0.0</option>');
+            });
 
             const el3b = createApiDocsElement();
             document.body.appendChild(el3b);
-            await new Promise(resolve => setTimeout(resolve, 30));
+            await vi.waitFor(() => {
+                expect(el3b.querySelector('.cdd-version-select')?.innerHTML).toContain('<option value="latest">latest</option>');
+            });
 
-            const genSpyNoHeader = vi
-                .spyOn(aotGenerator, 'generateAOTHtml')
-                .mockReturnValueOnce('<body><div>No header element</div></body>');
+            const genSpyNoHeader = vi.spyOn(aotGenerator, 'generateAOTBodyAndStyles').mockReturnValueOnce({
+                stylesHtml: '',
+                bodyHtml: '<div>No header element</div>',
+                title: 'T',
+                locale: 'en',
+            });
             const el4 = createApiDocsElement();
             document.body.appendChild(el4);
-            await new Promise(resolve => setTimeout(resolve, 30));
+            await vi.waitFor(() => {
+                expect(el4.innerHTML).toContain('No header element');
+            });
+            expect(el4.querySelector('.cdd-dynamic-header-content')).toBeNull();
             genSpyNoHeader.mockRestore();
 
             Object.defineProperty(window, 'location', {
@@ -926,9 +976,9 @@ info:
             // 2. Test interactive workflow Try-It-Out form submission (success, error, non-Error, and missing response container)
             document.body.innerHTML = `
                 <article class="cdd-endpoint cdd-workflow">
-                    <div class="cdd-step-card" data-step-id="s1" data-method="GET" data-route="/step1"></div>
+                    <div class="cdd-step-card" data-step-id="s1" data-method="GET" data-route="/step1" data-base-url="https://wf.example.com/"></div>
                     <div class="cdd-step-card"></div>
-                    <form id="wf-form-ok" class="cdd-workflow-try-form" data-workflow-id="wf1">
+                    <form id="wf-form-ok" class="cdd-workflow-try-form" data-workflow-id="wf1" data-base-url="https://wf.example.com">
                         <button type="submit">Run</button>
                     </form>
                     <div class="cdd-try-response">
@@ -939,9 +989,12 @@ info:
                 <form id="wf-form-detached" class="cdd-workflow-try-form">
                     <button type="submit">Run</button>
                 </form>
-                <div class="cdd-try-response"></div>
+                <div class="cdd-try-response">
+                </div>
                 <form id="wf-form-no-resp" class="cdd-workflow-try-form"></form>
             `;
+            initApiDocs(document);
+            // Calling initApiDocs a second time should be idempotent and not duplicate listeners
             initApiDocs(document);
 
             global.fetch = vi.fn().mockResolvedValue({
@@ -952,25 +1005,34 @@ info:
 
             const wfFormOk = getRequiredElement(document, '#wf-form-ok', HTMLFormElement);
             wfFormOk.dispatchEvent(new Event('submit', { cancelable: true }));
-            await new Promise(r => setTimeout(r, 20));
-            expect(document.querySelector('.cdd-try-status')?.textContent).toContain('wf1 (2 steps completed)');
+            await vi.waitFor(() => {
+                expect(document.querySelector('.cdd-try-status')?.textContent).toContain('wf1 (2 steps completed)');
+            });
+            expect(global.fetch).toHaveBeenCalledTimes(2);
+            expect(global.fetch).toHaveBeenCalledWith('https://wf.example.com/step1', { method: 'GET' });
 
             const wfFormDetached = getRequiredElement(document, '#wf-form-detached', HTMLFormElement);
             wfFormDetached.dispatchEvent(new Event('submit', { cancelable: true }));
-            await new Promise(r => setTimeout(r, 20));
+            await vi.waitFor(() => {
+                const respDiv = document.querySelector<HTMLElement>('#wf-form-detached + .cdd-try-response');
+                expect(respDiv?.style.display).toBe('block');
+            });
 
             const wfFormNoResp = getRequiredElement(document, '#wf-form-no-resp', HTMLFormElement);
             wfFormNoResp.dispatchEvent(new Event('submit', { cancelable: true }));
+            expect(global.fetch).toHaveBeenCalledTimes(2);
 
             global.fetch = vi.fn().mockRejectedValueOnce(new Error('WF Network Error'));
             wfFormOk.dispatchEvent(new Event('submit', { cancelable: true }));
-            await new Promise(r => setTimeout(r, 20));
-            expect(document.querySelector('.cdd-try-body')?.textContent).toBe('WF Network Error');
+            await vi.waitFor(() => {
+                expect(document.querySelector('.cdd-try-body')?.textContent).toBe('WF Network Error');
+            });
 
             global.fetch = vi.fn().mockRejectedValueOnce('WF String Error');
             wfFormOk.dispatchEvent(new Event('submit', { cancelable: true }));
-            await new Promise(r => setTimeout(r, 20));
-            expect(document.querySelector('.cdd-try-body')?.textContent).toBe('WF String Error');
+            await vi.waitFor(() => {
+                expect(document.querySelector('.cdd-try-body')?.textContent).toBe('WF String Error');
+            });
 
             // Test error on form with empty .cdd-try-response (no statusEl or bodyEl) via a failing step
             document.body.innerHTML = `
@@ -986,7 +1048,9 @@ info:
             global.fetch = vi.fn().mockRejectedValueOnce(new Error('Empty Resp Error'));
             const wfFormEmptyResp = getRequiredElement(document, '#wf-form-empty-resp', HTMLFormElement);
             wfFormEmptyResp.dispatchEvent(new Event('submit', { cancelable: true }));
-            await new Promise(r => setTimeout(r, 20));
+            await vi.waitFor(() => {
+                expect(global.fetch).toHaveBeenCalledTimes(1);
+            });
 
             // 3. Test companion Arazzo URL fetching (ok and non-ok) and UPDATE_ARAZZO postMessage
             global.fetch = vi.fn().mockImplementation(async (url: string) => {

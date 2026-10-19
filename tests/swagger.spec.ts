@@ -219,8 +219,14 @@ parameters:
 responses:
   GlobalResp:
     description: glob res
+    schema:
+      type: string
 paths:
   /test:
+    parameters:
+      - name: pathShared
+        in: header
+        type: string
     get:
       parameters:
         - name: arr
@@ -232,10 +238,14 @@ paths:
         "200":
           $ref: '#/responses/GlobalResp'
 `);
-        expect(doc.spec.components?.parameters?.['GlobalParam']).toBeDefined();
-        expect(doc.spec.components?.responses?.['GlobalResp']).toBeDefined();
+        const globalParam = assertNotRef<ParameterObject>(doc.spec.components?.parameters?.['GlobalParam']);
+        expect(assertNotRef<SchemaObject>(globalParam.schema).type).toBe('string');
+        const globalResp = assertNotRef<ResponseObject>(doc.spec.components?.responses?.['GlobalResp']);
+        expect(assertNotRef<SchemaObject>(globalResp.content?.['application/json']?.schema).type).toBe('string');
 
         const testPath = assertNotRef<PathItemObject>(doc.spec.paths?.['/test']);
+        const sharedParam = assertNotRef<ParameterObject>(testPath.parameters?.[0]);
+        expect(assertNotRef<SchemaObject>(sharedParam.schema).type).toBe('string');
         const arrParam = assertNotRef<ParameterObject>(testPath.get?.parameters?.[0]);
         const arrSchema = assertNotRef<SchemaObject>(arrParam.schema);
         expect(isReference(arrSchema.items) && arrSchema.items.$ref).toBe('#/components/schemas/Missing');
@@ -251,11 +261,18 @@ paths:
         const swaggerWithEdgeCases: Record<string, unknown> = {
             swagger: '2.0',
             components: { existing: true },
+            parameters: {
+                invalidParam: null,
+            },
+            responses: {
+                invalidGlobalResp: null,
+            },
             securityDefinitions: {
                 invalidEntry: null,
             },
             paths: {
                 '/edge': {
+                    parameters: [null, { name: 'p', in: 'query', type: 'integer' }],
                     get: {
                         parameters: [null, { in: 'formData', type: 'string' }],
                         responses: {

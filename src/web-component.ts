@@ -3,65 +3,15 @@
  * @module web-component
  */
 
-import { generateAOTHtml } from './aot-generator';
-import { isRecord, assembleStructuredCodeSnippet } from './parser';
+import { generateAOTBodyAndStyles, escapeHtml } from './aot-generator';
+import {
+    isRecord,
+    expandStructuredCodeVariants,
+    extractExamplesFromCddOutputRecord,
+    isSpecUrl,
+    normalizeSpecUrl,
+} from './parser';
 import { DocTranslations, defaultTranslations, CodeExample } from './types';
-
-/**
- * Extracts `CodeExample` entries from a parsed `CDDOutput`-like record (`endpoints`, `webhooks`, `workflows`).
- * @param rec The record containing `endpoints`, `webhooks`, and/or `workflows`.
- * @param lang The programming language identifier.
- * @returns Array of extracted `CodeExample` items.
- */
-function extractFromCddOutputRecord(rec: Record<string, unknown>, lang: string): CodeExample[] {
-    const out: CodeExample[] = [];
-    const extractRouteMap = (mapObj: Record<string, unknown>): void => {
-        for (const [route, methods] of Object.entries(mapObj)) {
-            if (isRecord(methods)) {
-                for (const [method, snippet] of Object.entries(methods)) {
-                    const text =
-                        typeof snippet === 'string'
-                            ? snippet
-                            : isRecord(snippet)
-                              ? assembleStructuredCodeSnippet(snippet)
-                              : String(snippet || '');
-                    out.push({
-                        language: lang,
-                        filepath: `${route.replace(/[^a-zA-Z0-9]/g, '_')}_${method}`,
-                        content: text,
-                        includeImports: false,
-                        includeWrapping: false,
-                    });
-                }
-            }
-        }
-    };
-
-    if (isRecord(rec['endpoints'])) {
-        extractRouteMap(rec['endpoints']);
-    }
-    if (isRecord(rec['webhooks'])) {
-        extractRouteMap(rec['webhooks']);
-    }
-    if (isRecord(rec['workflows'])) {
-        for (const [wfId, snippet] of Object.entries(rec['workflows'])) {
-            const text =
-                typeof snippet === 'string'
-                    ? snippet
-                    : isRecord(snippet)
-                      ? assembleStructuredCodeSnippet(snippet)
-                      : String(snippet || '');
-            out.push({
-                language: lang,
-                filepath: `workflow_${wfId}`,
-                content: text,
-                includeImports: false,
-                includeWrapping: false,
-            });
-        }
-    }
-    return out;
-}
 
 /**
  * Normalizes polymorphic SDK examples input (string, CDDOutput object, array of CDDOutput/CodeExample/docs.json)
@@ -112,7 +62,7 @@ export function normalizeSdkExamplesInput(val: unknown): CodeExample[] {
                     isRecord(parsed) &&
                     (isRecord(parsed['endpoints']) || isRecord(parsed['workflows']) || isRecord(parsed['webhooks']))
                 ) {
-                    extractedExamples.push(...extractFromCddOutputRecord(parsed, itemLang));
+                    extractedExamples.push(...extractExamplesFromCddOutputRecord(parsed, itemLang));
                     continue;
                 } else if (Array.isArray(parsed) && parsed.some(b => isRecord(b) && Array.isArray(b['operations']))) {
                     for (const block of parsed) {
@@ -125,30 +75,45 @@ export function normalizeSdkExamplesInput(val: unknown): CodeExample[] {
                             const opMethod = typeof op['method'] === 'string' ? op['method'] : '';
                             const opId = typeof op['operationId'] === 'string' ? op['operationId'] : '';
                             const codeObj = isRecord(op['code']) ? op['code'] : undefined;
-                            const snippet =
-                                typeof op['code'] === 'string'
-                                    ? op['code']
-                                    : codeObj
-                                      ? assembleStructuredCodeSnippet(codeObj)
-                                      : '';
 
                             if (opMethod.toUpperCase() === 'WORKFLOW' || opPath.startsWith('/workflows/')) {
                                 const wfId = opId || opPath.replace(/^\/workflows\//, '') || 'workflow';
-                                extractedExamples.push({
-                                    language: lang,
-                                    filepath: `workflow_${wfId}`,
-                                    content: snippet,
-                                    includeImports: false,
-                                    includeWrapping: false,
-                                });
+                                const filepath = `workflow_${wfId}`;
+                                if (codeObj) {
+                                    extractedExamples.push(
+                                        ...expandStructuredCodeVariants(codeObj, lang, filepath, { workflowId: wfId }),
+                                    );
+                                } else {
+                                    extractedExamples.push({
+                                        language: lang,
+                                        filepath,
+                                        content: typeof op['code'] === 'string' ? op['code'] : '',
+                                        includeImports: false,
+                                        includeWrapping: false,
+                                        workflowId: wfId,
+                                    });
+                                }
                             } else {
-                                extractedExamples.push({
-                                    language: lang,
-                                    filepath: `${opPath.replace(/[^a-zA-Z0-9]/g, '_')}_${opMethod.toLowerCase()}`,
-                                    content: snippet,
-                                    includeImports: false,
-                                    includeWrapping: false,
-                                });
+                                const filepath = `${opPath.replace(/[^a-zA-Z0-9]/g, '_')}_${opMethod.toLowerCase()}`;
+                                const meta = {
+                                    operationId: opId || undefined,
+                                    route: opPath || undefined,
+                                    method: opMethod.toLowerCase() || undefined,
+                                };
+                                if (codeObj) {
+                                    extractedExamples.push(
+                                        ...expandStructuredCodeVariants(codeObj, lang, filepath, meta),
+                                    );
+                                } else {
+                                    extractedExamples.push({
+                                        language: lang,
+                                        filepath,
+                                        content: String(op['code'] || ''),
+                                        includeImports: false,
+                                        includeWrapping: false,
+                                        ...meta,
+                                    });
+                                }
                             }
                         }
                     }
@@ -160,7 +125,7 @@ export function normalizeSdkExamplesInput(val: unknown): CodeExample[] {
         }
 
         if (isRecord(item['endpoints']) || isRecord(item['workflows']) || isRecord(item['webhooks'])) {
-            extractedExamples.push(...extractFromCddOutputRecord(item, itemLang));
+            extractedExamples.push(...extractExamplesFromCddOutputRecord(item, itemLang));
             continue;
         }
 
@@ -190,8 +155,11 @@ export function initApiDocs(
     const t: DocTranslations = { ...defaultTranslations, ...customTranslations };
 
     // Sync proxy inputs in the sidebar with the real hidden inputs at the top (when present)
-    const langProxies = container.querySelectorAll<HTMLInputElement>('input[name="ui-lang-proxy"]');
+    const langProxies = container.querySelectorAll<HTMLInputElement>(
+        'input[name="ui-lang-proxy"]:not([data-cdd-bound])',
+    );
     langProxies.forEach(proxy => {
+        proxy.setAttribute('data-cdd-bound', 'true');
         proxy.addEventListener('change', () => {
             const lang = proxy.id.replace('proxy-', '');
             const realInput = container.querySelector<HTMLInputElement>(`#lang-opt-${lang}`);
@@ -199,16 +167,22 @@ export function initApiDocs(
         });
     });
 
-    const importsProxy = container.querySelector<HTMLInputElement>('input[data-onchange-proxy*="opt-imports"]');
+    const importsProxy = container.querySelector<HTMLInputElement>(
+        'input[data-onchange-proxy*="opt-imports"]:not([data-cdd-bound])',
+    );
     if (importsProxy) {
+        importsProxy.setAttribute('data-cdd-bound', 'true');
         importsProxy.addEventListener('change', () => {
             const realInput = container.querySelector<HTMLInputElement>('#opt-imports');
             if (realInput) realInput.checked = importsProxy.checked;
         });
     }
 
-    const wrappingProxy = container.querySelector<HTMLInputElement>('input[data-onchange-proxy*="opt-wrapping"]');
+    const wrappingProxy = container.querySelector<HTMLInputElement>(
+        'input[data-onchange-proxy*="opt-wrapping"]:not([data-cdd-bound])',
+    );
     if (wrappingProxy) {
+        wrappingProxy.setAttribute('data-cdd-bound', 'true');
         wrappingProxy.addEventListener('change', () => {
             const realInput = container.querySelector<HTMLInputElement>('#opt-wrapping');
             if (realInput) realInput.checked = wrappingProxy.checked;
@@ -216,8 +190,9 @@ export function initApiDocs(
     }
 
     // Theme synchronization and persistence
-    const themeInput = container.querySelector<HTMLInputElement>('#opt-dark-mode');
+    const themeInput = container.querySelector<HTMLInputElement>('#opt-dark-mode:not([data-cdd-bound])');
     if (themeInput) {
+        themeInput.setAttribute('data-cdd-bound', 'true');
         const savedTheme = localStorage.getItem('cdd-theme');
         if (savedTheme) {
             themeInput.checked = savedTheme === 'dark';
@@ -261,41 +236,45 @@ export function initApiDocs(
     let sectionIndices: SearchIndex[] | null = null;
     let searchTimeout: ReturnType<typeof setTimeout> | undefined;
 
-    searchInput.addEventListener('input', () => {
-        const term = searchInput.value.toLowerCase();
+    if (!searchInput.hasAttribute('data-cdd-bound')) {
+        searchInput.setAttribute('data-cdd-bound', 'true');
+        searchInput.addEventListener('input', () => {
+            const term = searchInput.value.toLowerCase();
 
-        if (searchTimeout !== undefined) {
-            clearTimeout(searchTimeout);
-        }
-        searchTimeout = setTimeout(() => {
-            if (!itemIndices) {
-                itemIndices = Array.from(container.querySelectorAll<HTMLElement>('.cdd-toc-item')).map(el => ({
-                    el,
-                    text: `${el.textContent ?? ''} ${el.getAttribute('href') ?? ''}`.toLowerCase(),
-                }));
+            if (searchTimeout !== undefined) {
+                clearTimeout(searchTimeout);
             }
-            if (!sectionIndices) {
-                sectionIndices = Array.from(container.querySelectorAll<HTMLElement>('.cdd-endpoint')).map(el => ({
-                    el,
-                    text: `${el.textContent ?? ''} ${el.id}`.toLowerCase(),
-                }));
-            }
+            searchTimeout = setTimeout(() => {
+                if (!itemIndices) {
+                    itemIndices = Array.from(container.querySelectorAll<HTMLElement>('.cdd-toc-item')).map(el => ({
+                        el,
+                        text: `${el.textContent ?? ''} ${el.getAttribute('href') ?? ''}`.toLowerCase(),
+                    }));
+                }
+                if (!sectionIndices) {
+                    sectionIndices = Array.from(container.querySelectorAll<HTMLElement>('.cdd-endpoint')).map(el => ({
+                        el,
+                        text: `${el.textContent ?? ''} ${el.id}`.toLowerCase(),
+                    }));
+                }
 
-            itemIndices.forEach(item => {
-                const isVisible = item.text.includes(term);
-                item.el.style.display = isVisible ? 'block' : 'none';
-            });
+                itemIndices.forEach(item => {
+                    const isVisible = item.text.includes(term);
+                    item.el.style.display = isVisible ? 'block' : 'none';
+                });
 
-            sectionIndices.forEach(section => {
-                const isVisible = section.text.includes(term);
-                section.el.style.display = isVisible ? 'grid' : 'none';
-            });
-        }, 150);
-    });
+                sectionIndices.forEach(section => {
+                    const isVisible = section.text.includes(term);
+                    section.el.style.display = isVisible ? 'grid' : 'none';
+                });
+            }, 150);
+        });
+    }
 
     // Setup copy to clipboard buttons
-    const copyButtons = container.querySelectorAll<HTMLButtonElement>('.cdd-copy-btn');
+    const copyButtons = container.querySelectorAll<HTMLButtonElement>('.cdd-copy-btn:not([data-cdd-bound])');
     copyButtons.forEach(btn => {
+        btn.setAttribute('data-cdd-bound', 'true');
         btn.addEventListener('click', async () => {
             const codeEl = btn.parentElement?.querySelector('code');
             if (!codeEl) return;
@@ -317,12 +296,14 @@ export function initApiDocs(
     });
 
     // Setup Try It Out forms
-    const tryForms = container.querySelectorAll<HTMLFormElement>('.cdd-try-form');
+    const tryForms = container.querySelectorAll<HTMLFormElement>('.cdd-try-form:not([data-cdd-bound])');
     tryForms.forEach(form => {
+        form.setAttribute('data-cdd-bound', 'true');
         form.addEventListener('submit', async e => {
             e.preventDefault();
             const method = form.getAttribute('data-method') || 'GET';
             let route = form.getAttribute('data-route') || '';
+            const cleanBaseUrl = (form.getAttribute('data-base-url') || 'https://api.example.com').replace(/\/$/, '');
 
             const headers: Record<string, string> = {};
             const queryParams = new URLSearchParams();
@@ -356,7 +337,7 @@ export function initApiDocs(
             const versionPath = currentV ? `/${encodeURIComponent(currentV)}` : '';
             const querySuffix = queryParams.toString() ? `?${queryParams.toString()}` : '';
 
-            let url = `https://api.example.com${route}${querySuffix}`;
+            let url = `${cleanBaseUrl}${route}${querySuffix}`;
             if (org && repo) {
                 url = `/cdd-gateway/proxy/${encodeURIComponent(org)}/${encodeURIComponent(repo)}${versionPath}${route}${querySuffix}`;
             }
@@ -408,11 +389,13 @@ export function initApiDocs(
     });
 
     // Setup Interactive Arazzo Workflow Try-It-Out forms
-    const workflowForms = container.querySelectorAll<HTMLFormElement>('.cdd-workflow-try-form');
+    const workflowForms = container.querySelectorAll<HTMLFormElement>('.cdd-workflow-try-form:not([data-cdd-bound])');
     workflowForms.forEach(form => {
+        form.setAttribute('data-cdd-bound', 'true');
         form.addEventListener('submit', async e => {
             e.preventDefault();
             const wfId = form.getAttribute('data-workflow-id') || 'workflow';
+            const formBaseUrl = form.getAttribute('data-base-url') || 'https://api.example.com';
             const responseContainer = form.nextElementSibling;
             if (
                 !(responseContainer instanceof HTMLElement) ||
@@ -450,7 +433,8 @@ export function initApiDocs(
                     const stepId = card.getAttribute('data-step-id') || 'step';
                     const method = card.getAttribute('data-method') || 'GET';
                     const route = card.getAttribute('data-route') || '/';
-                    const res = await fetch(`https://api.example.com${route}`, { method });
+                    const cleanCardBase = (card.getAttribute('data-base-url') || formBaseUrl).replace(/\/$/, '');
+                    const res = await fetch(`${cleanCardBase}${route}`, { method });
                     const text = await res.text();
                     stepResults.push({ stepId, status: res.status, body: text });
                 }
@@ -472,24 +456,6 @@ export function initApiDocs(
 }
 
 /**
- * Checks whether a specification string represents an external or gateway URL rather than inline YAML/JSON content.
- * @param trimmed The trimmed specification string.
- * @returns True if the string should be fetched as a URL.
- */
-function isSpecUrl(trimmed: string): boolean {
-    const nl = String.fromCharCode(10);
-    return (
-        /^https?:\/\//i.test(trimmed) ||
-        (!trimmed.includes(nl) &&
-            !trimmed.startsWith('{') &&
-            !trimmed.includes('openapi:') &&
-            !trimmed.includes('swagger:') &&
-            !trimmed.includes('arazzo:') &&
-            trimmed.includes('/'))
-    );
-}
-
-/**
  * Web Component for CDD API and Arazzo Workflow Documentation.
  * Usage: `<cdd-api-docs spec="..." arazzo="..."></cdd-api-docs>`
  */
@@ -502,6 +468,8 @@ export class CDDApiDocs extends HTMLElement {
     private _org?: string | undefined;
     /** Repository identifier parsed from `/u/:org/:repo` dynamic routing. */
     private _repo?: string | undefined;
+    /** Monotonic render version counter to discard stale async fetch responses. */
+    private _renderVersion = 0;
     /** Bound `window.postMessage` event listener reference for clean removal on disconnect. */
     private readonly _boundMessageHandler: (event: MessageEvent) => void;
 
@@ -627,19 +595,18 @@ export class CDDApiDocs extends HTMLElement {
      */
     public async renderSpec(specContent: string, companionArazzoSpec?: string): Promise<void> {
         if (!specContent) return;
+        const currentRenderVersion = ++this._renderVersion;
         try {
             let contentToRender = specContent;
             const trimmed = specContent.trim();
 
             if (isSpecUrl(trimmed)) {
-                let url = trimmed;
-                if (!/^https?:\/\//i.test(url) && !url.startsWith('/')) {
-                    url = 'https://' + url;
-                }
+                const url = normalizeSpecUrl(trimmed);
 
                 this.innerHTML = `<div class="cdd-loading" style="padding: 2rem; font-family: sans-serif;">Loading documentation...</div>`;
 
                 const res = await fetch(url);
+                if (currentRenderVersion !== this._renderVersion) return;
                 if (!res.ok) {
                     if (res.status === 404) {
                         throw new Error(
@@ -653,11 +620,9 @@ export class CDDApiDocs extends HTMLElement {
 
             let companionContent: string | undefined = companionArazzoSpec;
             if (companionContent && isSpecUrl(companionContent.trim())) {
-                let arazzoUrl = companionContent.trim();
-                if (!/^https?:\/\//i.test(arazzoUrl) && !arazzoUrl.startsWith('/')) {
-                    arazzoUrl = 'https://' + arazzoUrl;
-                }
+                const arazzoUrl = normalizeSpecUrl(companionContent.trim());
                 const arazzoRes = await fetch(arazzoUrl);
+                if (currentRenderVersion !== this._renderVersion) return;
                 if (arazzoRes.ok) {
                     companionContent = await arazzoRes.text();
                 } else {
@@ -667,24 +632,15 @@ export class CDDApiDocs extends HTMLElement {
 
             const currentTheme = this.getAttribute('theme') || localStorage.getItem('cdd-theme') || 'light';
 
-            const html = generateAOTHtml(
+            const fragment = generateAOTBodyAndStyles(
                 contentToRender,
                 this._sdkExamples,
                 currentTheme === 'dark' ? 'dark' : 'light',
-                false,
                 this._translations,
                 companionContent,
             );
 
-            const bodyMatch = html.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-            const styleMatches = Array.from(html.matchAll(/<style[^>]*>[\s\S]*?<\/style>/gi));
-            const styleHtml = styleMatches.map(m => m[0]).join(String.fromCharCode(10));
-
-            if (bodyMatch && bodyMatch[1]) {
-                this.innerHTML = styleHtml + bodyMatch[1];
-            } else {
-                this.innerHTML = html;
-            }
+            this.innerHTML = `${fragment.stylesHtml}\n${fragment.bodyHtml}`;
 
             const org = this._org;
             const repo = this._repo;
@@ -757,7 +713,10 @@ ${err instanceof Error && err.stack ? err.stack : ''}</div>`;
             .then((versions: unknown) => {
                 if (Array.isArray(versions)) {
                     versionSelect.innerHTML = versions
-                        .map(v => `<option value="${String(v)}">${String(v)}</option>`)
+                        .map(v => {
+                            const escaped = escapeHtml(String(v));
+                            return `<option value="${escaped}">${escaped}</option>`;
+                        })
                         .join('');
                     const params = new URLSearchParams(window.location.search);
                     const selectedV = params.get('v');

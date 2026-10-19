@@ -9,6 +9,12 @@ import {
     SchemaObject,
     ReferenceObject,
     OperationObject,
+    PathItemObject,
+    ParameterObject,
+    RequestBodyObject,
+    ResponseObject,
+    ComponentsObject,
+    ServerObject,
     DocData,
     DocTranslations,
     defaultTranslations,
@@ -35,13 +41,143 @@ export function escapeHtml(str: string): string {
 }
 
 /**
- * Basic markdown rendering for descriptions.
+ * Sanitizes a URL string for safe insertion into `href` or `src` attributes, neutralizing
+ * dangerous schemes such as `javascript:`, `vbscript:`, or `data:`.
+ * @param url The raw URL string to validate.
+ * @returns The escaped safe URL string, or `'#'` if the scheme is unsafe.
+ */
+export function sanitizeUrl(url: string): string {
+    const trimmed = url.trim();
+    if (/^(javascript|vbscript|data):/i.test(trimmed)) {
+        return '#';
+    }
+    return escapeHtml(trimmed);
+}
+
+/**
+ * Sanitizes a language or identifier token for safe interpolation into CSS selectors and custom property names.
+ * @param ident The raw identifier string.
+ * @returns An alphanumeric/hyphen/underscore CSS-safe identifier string.
+ */
+export function sanitizeCssIdent(ident: string): string {
+    return ident.replace(/[^a-zA-Z0-9_-]/g, '');
+}
+
+/**
+ * Interpolates default values for `{variable}` placeholders in an OpenAPI `ServerObject` URL.
+ * @param server The `ServerObject` to resolve, or `undefined`.
+ * @returns The resolved base URL string (defaults to `'https://api.example.com'`).
+ */
+export function interpolateServerVariables(server: ServerObject | undefined): string {
+    if (!server || !server.url) return 'https://api.example.com';
+    let url = server.url;
+    if (server.variables) {
+        for (const [varName, varObj] of Object.entries(server.variables)) {
+            url = url.replace(new RegExp(`\\{${varName}\\}`, 'g'), varObj.default);
+        }
+    }
+    return url;
+}
+
+/**
+ * Basic markdown rendering for descriptions with raw HTML/script tag and unsafe link sanitization.
  * @param text The raw markdown string to convert to HTML.
- * @returns The rendered HTML string, or an empty string if undefined/empty.
+ * @returns The rendered and sanitized HTML string, or an empty string if undefined/empty.
  */
 export function renderMarkdown(text: string | undefined): string {
     if (!text) return '';
-    return marked.parse(text, { async: false });
+    const rawHtml = marked.parse(text, { async: false });
+    return rawHtml
+        .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+        .replace(/\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+        .replace(/href\s*=\s*"(?:javascript|vbscript|data):[^"]*"/gi, 'href="#"')
+        .replace(/href\s*=\s*'(?:javascript|vbscript|data):[^']*'/gi, "href='#'");
+}
+
+/**
+ * Dereferences a `ParameterObject | ReferenceObject` against `components.parameters`.
+ * @param param The parameter or reference object.
+ * @param components Optional OpenAPI `ComponentsObject`.
+ * @returns The resolved `ParameterObject`, or `undefined` if it is an unresolvable reference.
+ */
+export function resolveParameterRef(
+    param: ParameterObject | ReferenceObject,
+    components?: ComponentsObject,
+): ParameterObject | undefined {
+    if (!isReference(param)) return param;
+    const prefix = '#/components/parameters/';
+    const key = param.$ref.startsWith(prefix) ? param.$ref.slice(prefix.length) : param.$ref;
+    const found = components?.parameters?.[key];
+    if (found && !isReference(found)) {
+        return found;
+    }
+    return undefined;
+}
+
+/**
+ * Merges and dereferences path-level parameters and operation-level parameters.
+ * Operation-level parameters with the same `(name, in)` pair override path-level parameters.
+ * @param pathItem Optional parent `PathItemObject`.
+ * @param op The `OperationObject`.
+ * @param components Optional OpenAPI `ComponentsObject`.
+ * @returns Deduplicated array of resolved `ParameterObject` items.
+ */
+export function resolveOperationParameters(
+    pathItem: PathItemObject | undefined,
+    op: OperationObject,
+    components?: ComponentsObject,
+): ParameterObject[] {
+    const map = new Map<string, ParameterObject>();
+    const combined = [...(pathItem?.parameters ?? []), ...(op.parameters ?? [])];
+    for (const raw of combined) {
+        const resolved = resolveParameterRef(raw, components);
+        if (resolved) {
+            map.set(`${resolved.in}:${resolved.name}`, resolved);
+        }
+    }
+    return Array.from(map.values());
+}
+
+/**
+ * Dereferences a `RequestBodyObject | ReferenceObject` against `components.requestBodies`.
+ * @param rb The request body or reference object.
+ * @param components Optional OpenAPI `ComponentsObject`.
+ * @returns The resolved `RequestBodyObject`, or `undefined` if it is an unresolvable reference.
+ */
+export function resolveRequestBodyRef(
+    rb: RequestBodyObject | ReferenceObject | undefined,
+    components?: ComponentsObject,
+): RequestBodyObject | undefined {
+    if (!rb) return undefined;
+    if (!isReference(rb)) return rb;
+    const prefix = '#/components/requestBodies/';
+    const key = rb.$ref.startsWith(prefix) ? rb.$ref.slice(prefix.length) : rb.$ref;
+    const found = components?.requestBodies?.[key];
+    if (found && !isReference(found)) {
+        return found;
+    }
+    return undefined;
+}
+
+/**
+ * Dereferences a `ResponseObject | ReferenceObject` against `components.responses`.
+ * @param resp The response or reference object.
+ * @param components Optional OpenAPI `ComponentsObject`.
+ * @returns The resolved `ResponseObject`, or `undefined` if it is an unresolvable reference.
+ */
+export function resolveResponseRef(
+    resp: ResponseObject | ReferenceObject | undefined,
+    components?: ComponentsObject,
+): ResponseObject | undefined {
+    if (!resp) return undefined;
+    if (!isReference(resp)) return resp;
+    const prefix = '#/components/responses/';
+    const key = resp.$ref.startsWith(prefix) ? resp.$ref.slice(prefix.length) : resp.$ref;
+    const found = components?.responses?.[key];
+    if (found && !isReference(found)) {
+        return found;
+    }
+    return undefined;
 }
 
 /**
@@ -50,6 +186,8 @@ export function renderMarkdown(text: string | undefined): string {
  * @param route The API route path.
  * @param op The OpenAPI operation object.
  * @param baseUrl The base server URL (defaults to `'https://api.example.com'`).
+ * @param pathItem Optional parent `PathItemObject` for inherited parameters.
+ * @param components Optional OpenAPI `ComponentsObject` for dereferencing `$ref` parameters/requestBodies.
  * @returns A string containing the curl command.
  */
 export function generateCurl(
@@ -57,24 +195,25 @@ export function generateCurl(
     route: string,
     op: OperationObject,
     baseUrl: string = 'https://api.example.com',
+    pathItem?: PathItemObject,
+    components?: ComponentsObject,
 ): string {
     const upperMethod = method.toUpperCase();
     const methodPart = upperMethod === 'GET' ? '' : `-X ${upperMethod} `;
     const normalizedBase = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
     let curl = `curl ${methodPart}"${normalizedBase}${route}"`;
 
-    const cont = ' ' + String.fromCharCode(92) + String.fromCharCode(10) + '  ';
-    if (op.parameters) {
-        op.parameters.forEach(p => {
-            if (!isReference(p) && p.in === 'header') {
-                curl += `${cont}-H "${p.name}: <value>"`;
-            }
-        });
+    const cont = ' \\\n  ';
+    const mergedParams = resolveOperationParameters(pathItem, op, components);
+    for (const p of mergedParams) {
+        if (p.in === 'header') {
+            curl += `${cont}-H "${p.name}: <value>"`;
+        }
     }
 
-    if (op.requestBody && !isReference(op.requestBody)) {
-        const content = op.requestBody.content;
-        const firstType = Object.keys(content)[0];
+    const resolvedRb = resolveRequestBodyRef(op.requestBody, components);
+    if (resolvedRb && resolvedRb.content) {
+        const firstType = Object.keys(resolvedRb.content)[0];
         if (firstType) {
             curl += `${cont}-H "Content-Type: ${firstType}"`;
             curl += `${cont}-d '{"key": "value"}'`;
@@ -220,10 +359,11 @@ export function renderCodeAside(
                 <div class="cdd-tab-content cdd-tab-content-sdk">
                   ${languages
                       .map(lang => {
+                          const safeLang = sanitizeCssIdent(lang);
                           const langEx = examples.filter(ex => ex.language === lang);
-                          const prismLang = lang === 'ts' ? 'typescript' : lang === 'sh' ? 'bash' : lang;
+                          const prismLang = lang === 'ts' ? 'typescript' : lang === 'sh' ? 'bash' : safeLang;
                           return `
-                      <div class="cdd-lang-block cdd-show-if-${escapeHtml(lang)}">
+                      <div class="cdd-lang-block cdd-show-if-${safeLang}">
                         ${
                             langEx.length > 0
                                 ? langEx
@@ -273,6 +413,7 @@ export function renderWorkflowSection(
     const wf = nw.workflow;
     const wfDomId = `workflow-${wf.workflowId}`;
     const examples = docData.workflowCodeExamples?.[wf.workflowId] ?? [];
+    const baseUrl = interpolateServerVariables(docData.spec.servers?.[0]);
 
     const dependsOnHtml =
         wf.dependsOn && wf.dependsOn.length > 0
@@ -280,12 +421,15 @@ export function renderWorkflowSection(
                 <strong>${escapeHtml(t.workflowDependsOnHeading)}:</strong>
                 ${wf.dependsOn
                     .map(dep => {
-                        const cleanDep = dep.includes('.workflows.') ? dep.split('.workflows.')[1]! : dep;
+                        const depParts = dep.split('.workflows.');
+                        const cleanDep = depParts[1] ?? dep;
                         return `<a href="#workflow-${escapeHtml(cleanDep)}" class="cdd-badge cdd-badge-workflow">${escapeHtml(dep)}</a>`;
                     })
                     .join(' ')}
               </div>`
             : '';
+
+    const cycleBadgeHtml = nw.hasCycles ? `<span class="cdd-badge cdd-badge-delete">DAG CYCLE DETECTED</span>` : '';
 
     const inputsHtml = nw.resolvedInputs
         ? `<h3 class="cdd-section-title">${escapeHtml(t.workflowInputsHeading)}</h3>
@@ -454,7 +598,7 @@ export function renderWorkflowSection(
                     : '';
 
             return `
-              <div id="${escapeHtml(stepDomId)}" class="cdd-step-card cdd-deep-link-row" data-step-id="${escapeHtml(st.stepId)}" data-method="${escapeHtml((ns.linkedTarget?.method || 'GET').toUpperCase())}" data-route="${escapeHtml(ns.linkedTarget?.route || `/${st.stepId}`)}">
+              <div id="${escapeHtml(stepDomId)}" class="cdd-step-card cdd-deep-link-row" data-step-id="${escapeHtml(st.stepId)}" data-method="${escapeHtml((ns.linkedTarget?.method || 'GET').toUpperCase())}" data-route="${escapeHtml(ns.linkedTarget?.route || `/${st.stepId}`)}" data-base-url="${escapeHtml(baseUrl)}">
                 <div class="cdd-step-header">
                   <span class="cdd-step-index">${idx + 1}</span>
                   <a href="#${escapeHtml(stepDomId)}" class="cdd-anchor">#</a>
@@ -498,6 +642,7 @@ export function renderWorkflowSection(
             <div class="cdd-endpoint-path-row">
               <span class="cdd-badge cdd-badge-workflow">WORKFLOW</span>
               <code class="cdd-path-text">${escapeHtml(wf.workflowId)}</code>
+              ${cycleBadgeHtml}
             </div>
             ${wf.description ? `<div class="cdd-description">${renderMarkdown(wf.description)}</div>` : ''}
             ${dependsOnHtml}
@@ -512,7 +657,7 @@ export function renderWorkflowSection(
 
             <details class="cdd-try-it-out">
               <summary class="cdd-try-summary">${escapeHtml(t.runWorkflowBtn)}</summary>
-              <form class="cdd-workflow-try-form" action="/" method="POST" data-workflow-id="${escapeHtml(wf.workflowId)}">
+              <form class="cdd-workflow-try-form" action="/" method="POST" data-workflow-id="${escapeHtml(wf.workflowId)}" data-base-url="${escapeHtml(baseUrl)}">
                 <div class="cdd-try-field">
                   <label for="try-wf-${escapeHtml(wf.workflowId)}-inputs">${escapeHtml(t.workflowInputsHeading)} (JSON)</label>
                   <textarea id="try-wf-${escapeHtml(wf.workflowId)}-inputs" name="workflowInputs" rows="3">{}</textarea>
@@ -618,23 +763,35 @@ export function renderArazzoComponents(
 }
 
 /**
- * Generates the complete AOT HTML for the OpenAPI 3.2.0, Swagger 2.0, and/or Arazzo 1.1.0 documentation.
+ * Structured fragment output produced by `generateAOTBodyAndStyles` for direct embedding into `<cdd-api-docs>` or wrapping into a full HTML page.
+ */
+export interface AOTFragmentResult {
+    /** The two `<style>` blocks (`.no-js` progressive enhancement rules and the Material 3 layout stylesheet). */
+    stylesHtml: string;
+    /** The inner HTML body content (hidden state inputs and `.cdd-layout` grid). */
+    bodyHtml: string;
+    /** The resolved specification title. */
+    title: string;
+    /** The resolved UI locale code. */
+    locale: string;
+}
+
+/**
+ * Generates the `<style>` blocks and `<body>` inner HTML fragments for the OpenAPI 3.2.0, Swagger 2.0, and/or Arazzo 1.1.0 documentation without requiring regex extraction.
  * @param specContent Raw OpenAPI or Arazzo spec string (YAML/JSON).
  * @param sdkExamples List of code examples to include.
  * @param theme UI theme (`'light'` or `'dark'`).
- * @param injectLiveReload Whether to inject the `/__livereload` EventSource script.
  * @param customTranslations Optional partial translation dictionary to override defaults.
  * @param companionArazzoContent Optional companion Arazzo 1.1.0 spec string (YAML/JSON) to render alongside an OpenAPI spec.
- * @returns Full HTML document string.
+ * @returns An `AOTFragmentResult` containing `stylesHtml`, `bodyHtml`, `title`, and `locale`.
  */
-export function generateAOTHtml(
+export function generateAOTBodyAndStyles(
     specContent: string,
     sdkExamples: CodeExample[] = [],
     theme: 'light' | 'dark' = 'light',
-    injectLiveReload: boolean = false,
     customTranslations: Partial<DocTranslations> = {},
     companionArazzoContent?: string,
-): string {
+): AOTFragmentResult {
     const t: DocTranslations = { ...defaultTranslations, ...customTranslations };
     const data = normalizeSpec(specContent, companionArazzoContent);
     if (sdkExamples.length > 0) {
@@ -645,7 +802,7 @@ export function generateAOTHtml(
     if (languages.length === 0) languages.push('javascript');
 
     const spec = data.spec;
-    const baseUrl = spec.servers?.[0]?.url || 'https://api.example.com';
+    const baseUrl = interpolateServerVariables(spec.servers?.[0]);
     const paths = spec.paths || {};
     let mainHtml = '';
     let tocHtml = '';
@@ -679,11 +836,64 @@ export function generateAOTHtml(
             routeHasOps = true;
             const id = op.operationId || `${m}-${route}`;
             const upperMethod = m.toUpperCase();
+            const opBaseUrl = op.servers?.[0]
+                ? interpolateServerVariables(op.servers[0])
+                : pathItem.servers?.[0]
+                  ? interpolateServerVariables(pathItem.servers[0])
+                  : baseUrl;
 
             routeToc += `<a href="#${escapeHtml(id)}" class="cdd-toc-item cdd-method-${escapeHtml(m)}">${escapeHtml(upperMethod)}</a>`;
 
-            const curl = generateCurl(m, route, op, baseUrl);
+            const curl = generateCurl(m, route, op, opBaseUrl, pathItem, spec.components);
             const examples = data.codeExamples[id] || [];
+            const mergedParams = resolveOperationParameters(pathItem, op, spec.components);
+            const resolvedRb = resolveRequestBodyRef(op.requestBody, spec.components);
+
+            let requestBodySchemaHtml = '';
+            if (resolvedRb && resolvedRb.content) {
+                const mediaBlocks: string[] = [];
+                for (const [mediaType, mt] of Object.entries(resolvedRb.content)) {
+                    if (mt.schema) {
+                        mediaBlocks.push(
+                            `<div class="cdd-media-block"><code class="cdd-badge cdd-badge-meta">${escapeHtml(mediaType)}</code>${renderSchema(mt.schema, 0, `${id}-req`, t)}</div>`,
+                        );
+                    }
+                }
+                if (mediaBlocks.length > 0) {
+                    requestBodySchemaHtml = `<h3 class="cdd-section-title">${escapeHtml(t.requestBody)}</h3>
+                    ${resolvedRb.description ? `<div class="cdd-description">${renderMarkdown(resolvedRb.description)}</div>` : ''}
+                    ${mediaBlocks.join('')}`;
+                }
+            }
+
+            let responsesHtml = '';
+            if (op.responses) {
+                const respRows: string[] = [];
+                for (const [statusCode, rawResp] of Object.entries(op.responses)) {
+                    const resolvedResp = resolveResponseRef(rawResp, spec.components);
+                    if (!resolvedResp) continue;
+                    const mediaBlocks: string[] = [];
+                    if (resolvedResp.content) {
+                        for (const [mediaType, mt] of Object.entries(resolvedResp.content)) {
+                            if (mt.schema) {
+                                mediaBlocks.push(
+                                    `<div><code class="cdd-badge cdd-badge-meta">${escapeHtml(mediaType)}</code>${renderSchema(mt.schema, 0, `${id}-resp-${statusCode}`, t)}</div>`,
+                                );
+                            }
+                        }
+                    }
+                    respRows.push(
+                        `<tr><td><code>${escapeHtml(statusCode)}</code></td><td>${renderMarkdown(resolvedResp.description)}${mediaBlocks.join('')}</td></tr>`,
+                    );
+                }
+                if (respRows.length > 0) {
+                    responsesHtml = `<h3 class="cdd-section-title">${escapeHtml(t.response)}</h3>
+                    <table class="cdd-params-table">
+                      <thead><tr><th>Status</th><th>${escapeHtml(t.tableHeaderDescription)}</th></tr></thead>
+                      <tbody>${respRows.join('')}</tbody>
+                    </table>`;
+                }
+            }
 
             mainHtml += `
         <article id="${escapeHtml(id)}" class="cdd-endpoint">
@@ -696,15 +906,14 @@ export function generateAOTHtml(
             ${op.description ? `<div class="cdd-description">${renderMarkdown(op.description)}</div>` : ''}
             
             ${
-                op.parameters
+                mergedParams.length > 0
                     ? `
               <h3 class="cdd-section-title">${escapeHtml(t.parameters)}</h3>
               <table class="cdd-params-table">
                 <thead><tr><th>${escapeHtml(t.tableHeaderName)}</th><th>${escapeHtml(t.tableHeaderIn)}</th><th>${escapeHtml(t.tableHeaderType)}</th><th>${escapeHtml(t.tableHeaderDescription)}</th></tr></thead>
                 <tbody>
-                  ${op.parameters
+                  ${mergedParams
                       .map(p => {
-                          if (isReference(p)) return '';
                           const paramId = `${id}-param-${p.name}`;
                           const paramType = p.schema && !isReference(p.schema) && p.schema.type ? p.schema.type : 'any';
                           return `<tr id="${escapeHtml(paramId)}" class="cdd-deep-link-row">
@@ -720,27 +929,24 @@ export function generateAOTHtml(
             `
                     : ''
             }
+            ${requestBodySchemaHtml}
+            ${responsesHtml}
 
             <details class="cdd-try-it-out">
               <summary class="cdd-try-summary">${escapeHtml(t.tryItOut)}</summary>
-              <form class="cdd-try-form" method="${m === 'get' ? 'GET' : 'POST'}" action="/" data-method="${escapeHtml(upperMethod)}" data-route="${escapeHtml(route)}">
-                ${
-                    op.parameters
-                        ? op.parameters
-                              .map(p => {
-                                  if (isReference(p)) return '';
-                                  return `
+              <form class="cdd-try-form" method="${m === 'get' ? 'GET' : 'POST'}" action="/" data-method="${escapeHtml(upperMethod)}" data-route="${escapeHtml(route)}" data-base-url="${escapeHtml(opBaseUrl)}">
+                ${mergedParams
+                    .map(
+                        p => `
                     <div class="cdd-try-field">
                       <label for="try-${escapeHtml(id)}-${escapeHtml(p.name)}">${escapeHtml(p.name)} (${escapeHtml(p.in)})${p.required ? ' *' : ''}</label>
                       <input type="text" id="try-${escapeHtml(id)}-${escapeHtml(p.name)}" name="${escapeHtml(p.name)}" data-in="${escapeHtml(p.in)}" ${p.required ? 'required' : ''}>
                     </div>
-                  `;
-                              })
-                              .join('')
-                        : ''
-                }
+                  `,
+                    )
+                    .join('')}
                 ${
-                    op.requestBody && !isReference(op.requestBody)
+                    resolvedRb
                         ? `
                   <div class="cdd-try-field">
                     <label for="try-${escapeHtml(id)}-body">${escapeHtml(t.requestBody)}</label>
@@ -776,7 +982,7 @@ export function generateAOTHtml(
                 const id = op.operationId || `webhook-${m}-${webhookName}`;
                 const upperMethod = m.toUpperCase();
                 webhooksTocHtml += `<a href="#${escapeHtml(id)}" class="cdd-toc-item">WEBHOOK: ${escapeHtml(webhookName)} (${escapeHtml(upperMethod)})</a>`;
-                const curl = generateCurl(m, `/${webhookName}`, op, baseUrl);
+                const curl = generateCurl(m, `/${webhookName}`, op, baseUrl, pathItem, spec.components);
                 const examples = data.codeExamples[id] || [];
 
                 mainHtml += `
@@ -855,16 +1061,9 @@ export function generateAOTHtml(
     --cdd-outline-variant: #45464f;
   `;
 
-    return `<!DOCTYPE html>
-<html lang="${escapeHtml(t.locale)}" class="no-js">
-<head>
-  <script>document.documentElement.classList.remove('no-js');</script>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${escapeHtml(spec.info.title)} - API Reference</title>
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono&display=swap" rel="stylesheet">
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
-  <style>
+    const safeLanguages = languages.map(sanitizeCssIdent);
+
+    const stylesHtml = `<style>
     /* Progressive Enhancement: Hide JS-dependent elements when JS is disabled */
     .no-js .cdd-copy-btn,
     .no-js .cdd-search-input,
@@ -889,7 +1088,7 @@ export function generateAOTHtml(
       --cdd-query: #005ac1; --cdd-query-bg: #d8e2ff;
       --cdd-workflow: #6750a4; --cdd-workflow-bg: #eaddff;
       
-      ${languages.map(lang => `--cdd-display-${lang}: none;`).join(' ')}
+      ${safeLanguages.map(lang => `--cdd-display-${lang}: none;`).join(' ')}
       --cdd-display-imports: block;
       --cdd-display-wrapping: block;
     }
@@ -898,7 +1097,7 @@ export function generateAOTHtml(
       ${darkVars}
     }
 
-    ${languages.map(lang => `#lang-opt-${lang}:checked ~ .cdd-layout .cdd-show-if-${lang} { display: block; }`).join(String.fromCharCode(10))}
+    ${safeLanguages.map(lang => `#lang-opt-${lang}:checked ~ .cdd-layout .cdd-show-if-${lang} { display: block; }`).join('\n')}
     #opt-imports:checked ~ * { --cdd-display-imports: block; }
     #opt-imports:not(:checked) ~ * { --cdd-display-imports: none; }
     #opt-wrapping:checked ~ * { --cdd-display-wrapping: block; }
@@ -1016,8 +1215,8 @@ export function generateAOTHtml(
     .cdd-try-btn { margin-top: 1rem; background: var(--cdd-primary); color: var(--cdd-on-primary); border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-weight: 500; }
     .cdd-try-btn:hover { opacity: 0.9; }
 
-    ${languages.map(lang => `#lang-opt-${lang}:checked ~ .cdd-layout label[for="lang-opt-${lang}"] { background: var(--cdd-primary); color: var(--cdd-on-primary); border-color: var(--cdd-primary); font-weight: 500; }`).join(String.fromCharCode(10))}
-    ${languages.map(lang => `#lang-opt-${lang}:focus-visible ~ .cdd-layout label[for="lang-opt-${lang}"] { outline: 2px solid var(--cdd-primary); outline-offset: 2px; }`).join(String.fromCharCode(10))}
+    ${safeLanguages.map(lang => `#lang-opt-${lang}:checked ~ .cdd-layout label[for="lang-opt-${lang}"] { background: var(--cdd-primary); color: var(--cdd-on-primary); border-color: var(--cdd-primary); font-weight: 500; }`).join('\n')}
+    ${safeLanguages.map(lang => `#lang-opt-${lang}:focus-visible ~ .cdd-layout label[for="lang-opt-${lang}"] { outline: 2px solid var(--cdd-primary); outline-offset: 2px; }`).join('\n')}
     #opt-imports:checked ~ .cdd-layout label[for="opt-imports"] { background: var(--cdd-primary); color: var(--cdd-on-primary); border-color: var(--cdd-primary); }
     #opt-imports:focus-visible ~ .cdd-layout label[for="opt-imports"] { outline: 2px solid var(--cdd-primary); outline-offset: 2px; }
     #opt-wrapping:checked ~ .cdd-layout label[for="opt-wrapping"] { background: var(--cdd-primary); color: var(--cdd-on-primary); border-color: var(--cdd-primary); }
@@ -1032,10 +1231,9 @@ export function generateAOTHtml(
     #opt-imports:not(:checked) ~ #opt-wrapping:checked ~ .cdd-layout .cdd-variant-block.cdd-hide-if-imports.cdd-show-if-wrapping { display: block; }
     #opt-imports:checked ~ #opt-wrapping:not(:checked) ~ .cdd-layout .cdd-variant-block.cdd-show-if-imports.cdd-hide-if-wrapping { display: block; }
     #opt-imports:not(:checked) ~ #opt-wrapping:not(:checked) ~ .cdd-layout .cdd-variant-block.cdd-hide-if-imports.cdd-hide-if-wrapping { display: block; }
-  </style>
-</head>
-<body>
-  ${languages.map((lang, i) => `<input type="radio" id="lang-opt-${escapeHtml(lang)}" name="global-lang" class="cdd-visually-hidden" ${i === 0 ? 'checked' : ''}>`).join('')}
+  </style>`;
+
+    const bodyHtml = `${languages.map((lang, i) => `<input type="radio" id="lang-opt-${sanitizeCssIdent(lang)}" name="global-lang" class="cdd-visually-hidden" ${i === 0 ? 'checked' : ''}>`).join('')}
   <input type="checkbox" id="opt-imports" class="cdd-visually-hidden" checked>
   <input type="checkbox" id="opt-wrapping" class="cdd-visually-hidden" checked>
   <input type="checkbox" id="opt-dark-mode" class="cdd-visually-hidden" ${theme === 'dark' ? 'checked' : ''}>
@@ -1072,12 +1270,12 @@ export function generateAOTHtml(
         <h1 style="font-size: 3rem; font-weight: 300;">${escapeHtml(spec.info.title)}</h1>
         <div class="cdd-description">${renderMarkdown(spec.info.description)}</div>
         ${sourceDescriptionsHtml}
-        ${spec.info.termsOfService ? `<p style="font-size: 0.875rem;"><a href="${escapeHtml(spec.info.termsOfService)}" target="_blank">${escapeHtml(t.termsOfService)}</a></p>` : ''}
+        ${spec.info.termsOfService ? `<p style="font-size: 0.875rem;"><a href="${sanitizeUrl(spec.info.termsOfService)}" target="_blank">${escapeHtml(t.termsOfService)}</a></p>` : ''}
         ${
             spec.info.contact
                 ? `<p style="font-size: 0.875rem;">${escapeHtml(t.contactPrefix)}${
                       spec.info.contact.url
-                          ? `<a href="${escapeHtml(spec.info.contact.url)}" target="_blank">${escapeHtml(spec.info.contact.name || t.apiSupport)}</a>`
+                          ? `<a href="${sanitizeUrl(spec.info.contact.url)}" target="_blank">${escapeHtml(spec.info.contact.name || t.apiSupport)}</a>`
                           : spec.info.contact.email
                             ? `<a href="mailto:${escapeHtml(spec.info.contact.email)}">${escapeHtml(spec.info.contact.name || spec.info.contact.email)}</a>`
                             : escapeHtml(spec.info.contact.name || t.apiSupport)
@@ -1101,7 +1299,7 @@ export function generateAOTHtml(
       ${languages
           .map(
               lang => `
-        <label for="lang-opt-${escapeHtml(lang)}" class="cdd-setting-label">
+        <label for="lang-opt-${sanitizeCssIdent(lang)}" class="cdd-setting-label">
           ${escapeHtml(lang)}
         </label>
       `,
@@ -1117,7 +1315,49 @@ export function generateAOTHtml(
         </label>
       </div>
     </aside>
-  </div>
+  </div>`;
+
+    return {
+        stylesHtml,
+        bodyHtml,
+        title: spec.info.title,
+        locale: t.locale,
+    };
+}
+
+/**
+ * Generates the complete AOT HTML for the OpenAPI 3.2.0, Swagger 2.0, and/or Arazzo 1.1.0 documentation.
+ * @param specContent Raw OpenAPI or Arazzo spec string (YAML/JSON).
+ * @param sdkExamples List of code examples to include.
+ * @param theme UI theme (`'light'` or `'dark'`).
+ * @param injectLiveReload Whether to inject the `/__livereload` EventSource script.
+ * @param customTranslations Optional partial translation dictionary to override defaults.
+ * @param companionArazzoContent Optional companion Arazzo 1.1.0 spec string (YAML/JSON) to render alongside an OpenAPI spec.
+ * @returns Full HTML document string.
+ */
+export function generateAOTHtml(
+    specContent: string,
+    sdkExamples: CodeExample[] = [],
+    theme: 'light' | 'dark' = 'light',
+    injectLiveReload: boolean = false,
+    customTranslations: Partial<DocTranslations> = {},
+    companionArazzoContent?: string,
+): string {
+    const fragment = generateAOTBodyAndStyles(specContent, sdkExamples, theme, customTranslations, companionArazzoContent);
+
+    return `<!DOCTYPE html>
+<html lang="${escapeHtml(fragment.locale)}" class="no-js">
+<head>
+  <script>document.documentElement.classList.remove('no-js');</script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${escapeHtml(fragment.title)} - API Reference</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono&display=swap" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+  ${fragment.stylesHtml}
+</head>
+<body>
+  ${fragment.bodyHtml}
   <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js"></script>
   ${

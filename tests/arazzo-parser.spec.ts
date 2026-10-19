@@ -410,6 +410,13 @@ describe('arazzo-parser.ts', () => {
             expect(missing1).toEqual({ name: 'customRef', value: 42 });
             const missing2 = resolveArazzoReusableParameter({ reference: '' });
             expect(missing2).toEqual({ name: '', value: '' });
+            const crossCatParam = resolveArazzoReusableParameter(
+                { reference: '$components.successActions.logAndEnd' },
+                components,
+            );
+            expect(crossCatParam).toEqual({ name: 'logAndEnd', value: '$components.successActions.logAndEnd' });
+            const bareCompParam = resolveArazzoReusableParameter({ reference: '$components.' }, components);
+            expect(bareCompParam).toEqual({ name: '$components.', value: '$components.' });
 
             // Success actions
             const directSa: SuccessActionObject = { name: 'directSa', type: 'end' };
@@ -419,6 +426,12 @@ describe('arazzo-parser.ts', () => {
             ).toEqual({ name: 'logAndEnd', type: 'end' });
             expect(resolveArazzoSuccessAction({ reference: 'missingSa' }, components)).toEqual({
                 name: 'missingSa',
+                type: 'end',
+            });
+            expect(
+                resolveArazzoSuccessAction({ reference: '$components.parameters.authHeader' }, components),
+            ).toEqual({
+                name: 'authHeader',
                 type: 'end',
             });
             expect(resolveArazzoSuccessAction({ reference: '' })).toEqual({ name: '', type: 'end' });
@@ -431,6 +444,12 @@ describe('arazzo-parser.ts', () => {
             ).toEqual({ name: 'retryThrice', type: 'retry', retryLimit: 3 });
             expect(resolveArazzoFailureAction({ reference: 'missingFa' }, components)).toEqual({
                 name: 'missingFa',
+                type: 'end',
+            });
+            expect(
+                resolveArazzoFailureAction({ reference: '$components.parameters.authHeader' }, components),
+            ).toEqual({
+                name: 'authHeader',
                 type: 'end',
             });
             expect(resolveArazzoFailureAction({ reference: '' })).toEqual({ name: '', type: 'end' });

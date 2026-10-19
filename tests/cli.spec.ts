@@ -74,13 +74,30 @@ vi.mock('../src/runner', () => ({
     generateAllSnippets: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock('../src/parser', () => ({
-    normalizeSpec: vi.fn().mockReturnValue({ spec: {} }),
-}));
+vi.mock('../src/parser', async importOriginal => {
+    const actual = await importOriginal<typeof import('../src/parser')>();
+    return {
+        ...actual,
+        normalizeSpec: vi.fn((content: string, companion?: string) => actual.normalizeSpec(content, companion)),
+    };
+});
 
-vi.mock('../src/aot-generator', () => ({
-    generateAOTHtml: vi.fn().mockReturnValue('<html></html>'),
-}));
+vi.mock('../src/aot-generator', async importOriginal => {
+    const actual = await importOriginal<typeof import('../src/aot-generator')>();
+    return {
+        ...actual,
+        generateAOTHtml: vi.fn(
+            (
+                spec: string,
+                ex?: import('../src/types').CodeExample[],
+                theme?: 'light' | 'dark',
+                live?: boolean,
+                trans?: Partial<import('../src/types').DocTranslations>,
+                companion?: string,
+            ) => actual.generateAOTHtml(spec, ex, theme, live, trans, companion),
+        ),
+    };
+});
 
 /**
  * Mock response payload returned by `fetchMock`.
@@ -211,8 +228,8 @@ paths: {}`,
         const result = await generate(config);
 
         expect(fetchMock).toHaveBeenCalledWith('https://example.com/spec.yaml');
-        expect(fs.writeFileSync).toHaveBeenCalledWith(expect.stringContaining('.temp-spec.yaml'), expect.any(String));
-        expect(fs.unlinkSync).toHaveBeenCalledWith(expect.stringContaining('.temp-spec.yaml'));
+        expect(fs.writeFileSync).toHaveBeenCalledWith(expect.stringContaining('.temp-spec-'), expect.any(String));
+        expect(fs.unlinkSync).toHaveBeenCalledWith(expect.stringContaining('.temp-spec-'));
         expect(result).toBe(true);
     });
 
@@ -437,8 +454,7 @@ paths: {}`,
         expect(await secondCall).toBeUndefined();
 
         await firstCall;
-        const nl = String.fromCharCode(10);
-        expect(resMock.write).toHaveBeenCalledWith(`data: reload${nl}${nl}`);
+        expect(resMock.write).toHaveBeenCalledWith('data: reload\n\n');
 
         vi.advanceTimersByTime(500);
         vi.useRealTimers();
@@ -491,7 +507,7 @@ paths: {}`,
         expect(consoleLogMock).not.toHaveBeenCalled();
     });
 
-    it('generate and startWatchServer should support companion Arazzo local files and URLs', async () => {
+    it('generate and startWatchServer should support companion Arazzo local files, URLs, and server close watcher cleanup', async () => {
         vi.mocked(normalizeSpec).mockReturnValue({
             spec: { openapi: '3.2.0', info: { title: 'T', version: '1' } },
             codeExamples: {},
@@ -507,7 +523,7 @@ paths: {}`,
         // 2. Remote companion Arazzo URL (without https:// prefix)
         vi.mocked(fs.existsSync).mockImplementation((p: fs.PathLike) => {
             const s = p.toString();
-            if (s.includes('spec.yaml') || s.includes('.temp-arazzo.yaml')) return true;
+            if (s.includes('spec.yaml') || s.includes('.temp-arazzo-')) return true;
             return false;
         });
         fetchMock.mockResolvedValueOnce({
@@ -516,7 +532,7 @@ paths: {}`,
         });
         const urlConfig = parseArgs(['-i', 'spec.yaml', '-a', 'example.com/arazzo.yaml']);
         expect(await generate(urlConfig)).toBe(true);
-        expect(fs.unlinkSync).toHaveBeenCalledWith(expect.stringContaining('.temp-arazzo.yaml'));
+        expect(fs.unlinkSync).toHaveBeenCalledWith(expect.stringContaining('.temp-arazzo-'));
 
         // 3. Remote companion Arazzo URL failure
         fetchMock.mockResolvedValueOnce({
@@ -527,13 +543,39 @@ paths: {}`,
         const failUrlConfig = parseArgs(['-i', 'spec.yaml', '-a', 'https://example.com/arazzo.yaml']);
         expect(await generate(failUrlConfig)).toBe(false);
 
-        // 4. Watch server watching both inputSpec and arazzoSpec
+        // 4. Watch server watching both inputSpec and arazzoSpec and closing watchers on server close
+        let closeHandler: (() => void) | undefined;
+        mockExpressApp.listen.mockImplementationOnce((_port: number, cb?: () => void) => {
+            if (cb) cb();
+            return {
+                close: vi.fn(),
+                on: vi.fn((evt: string, handler: () => void) => {
+                    if (evt === 'close') closeHandler = handler;
+                }),
+            };
+        });
+        const watcherCloseSpy = vi.fn();
+        const watchFn = vi.mocked<
+            (
+                filename: fs.PathLike,
+                listener: (event: string) => Promise<void>,
+            ) => {
+                /** Optional close method on the mocked watcher. */
+                close?: () => void;
+            }
+        >(fs.watch);
+        watchFn.mockReturnValueOnce({ close: watcherCloseSpy }).mockReturnValueOnce({});
         vi.mocked(fs.existsSync).mockReturnValue(true);
         await startWatchServer(parseArgs(['-i', 'spec.yaml', '-a', 'arazzo.yaml', '-w']));
         expect(fs.watch).toHaveBeenCalledWith(expect.stringContaining('arazzo.yaml'), expect.any(Function));
+        expect(closeHandler).toBeDefined();
+        closeHandler?.();
+        expect(watcherCloseSpy).toHaveBeenCalledTimes(1);
 
         // 5. Watch server when arazzoSpec does not exist locally
+        vi.mocked(fs.watch).mockClear();
         vi.mocked(fs.existsSync).mockReturnValue(false);
         await startWatchServer(parseArgs(['-i', 'spec.yaml', '-a', 'https://example.com/arazzo.yaml', '-w']));
+        expect(fs.watch).not.toHaveBeenCalled();
     });
 });

@@ -469,4 +469,10 @@ export interface NormalizedWorkflow {
     normalizedSteps: NormalizedStep[];
     /** Generated multi-step cURL / CLI execution preview script for this workflow. */
     cliPreview: string;
+    /** Topologically sorted stepId execution order computed by the DAG builder. */
+    stepOrder?: string[] | undefined;
+    /** Directed dependency edges between steps within this workflow. */
+    stepEdges?: DagEdge[] | undefined;
+    /** True if a dependency cycle was detected in this document's workflow or step graph. */
+    hasCycles?: boolean | undefined;
 }

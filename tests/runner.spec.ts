@@ -92,7 +92,7 @@ describe('runner.ts', () => {
     });
 
     describe('runCddCtl', () => {
-        it('should securely execute cdd-ctl with the correct arguments', async () => {
+        it('should securely execute cdd-ctl with the correct arguments (resolving LANGUAGE_MAP aliases)', async () => {
             let capturedCmd = '';
             let capturedArgs: readonly string[] = [];
             const mockExec = mockExecFileWith((cmd, cmdArgs, cb) => {
@@ -106,7 +106,10 @@ describe('runner.ts', () => {
             expect(stdout).toBe('mock_stdout');
             expect(mockExec).toHaveBeenCalledTimes(1);
             expect(capturedCmd).toBe('./cdd-ctl');
-            expect(capturedArgs).toEqual(['typescript', 'to_docs_json', '-i', 'spec.json']);
+            expect(capturedArgs).toEqual(['ts', 'to_docs_json', '-i', 'spec.json']);
+
+            await runCddCtl('custom-lang', 'spec.json');
+            expect(capturedArgs).toEqual(['custom-lang', 'to_docs_json', '-i', 'spec.json']);
         });
 
         it('should allow overriding the cdd-ctl binary path', async () => {
@@ -124,7 +127,7 @@ describe('runner.ts', () => {
 
             expect(stdout).toBe('success');
             expect(capturedCmd).toBe('/usr/local/bin/cdd-ctl');
-            expect(capturedArgs).toEqual(['python', 'to_docs_json', '-i', 'spec.yaml']);
+            expect(capturedArgs).toEqual(['python-all', 'to_docs_json', '-i', 'spec.yaml']);
         });
 
         it('should pass --no-imports flag when noImports is true', async () => {
@@ -316,6 +319,8 @@ describe('runner.ts', () => {
                 content: 'code',
                 includeImports: true,
                 includeWrapping: true,
+                route: '/api',
+                method: 'get',
             });
 
             expect(results).toContainEqual(

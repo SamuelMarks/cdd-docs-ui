@@ -428,9 +428,7 @@ describe('arazzo-parser.ts', () => {
                 name: 'missingSa',
                 type: 'end',
             });
-            expect(
-                resolveArazzoSuccessAction({ reference: '$components.parameters.authHeader' }, components),
-            ).toEqual({
+            expect(resolveArazzoSuccessAction({ reference: '$components.parameters.authHeader' }, components)).toEqual({
                 name: 'authHeader',
                 type: 'end',
             });
@@ -446,9 +444,7 @@ describe('arazzo-parser.ts', () => {
                 name: 'missingFa',
                 type: 'end',
             });
-            expect(
-                resolveArazzoFailureAction({ reference: '$components.parameters.authHeader' }, components),
-            ).toEqual({
+            expect(resolveArazzoFailureAction({ reference: '$components.parameters.authHeader' }, components)).toEqual({
                 name: 'authHeader',
                 type: 'end',
             });

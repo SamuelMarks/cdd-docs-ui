@@ -31,9 +31,10 @@ interface ExecFileResult {
  */
 type ExecFileCallback = (error: Error | null, result?: ExecFileResult) => void;
 
-/** Hoisted strongly-typed mock for `node:child_process.execFile`. */
-const { execFileMock } = vi.hoisted(() => ({
+/** Hoisted strongly-typed mocks for `node:child_process.execFile` and `node:fs.existsSync`. */
+const { execFileMock, existsSyncMock } = vi.hoisted(() => ({
     execFileMock: vi.fn<(cmd: string, cmdArgs: readonly string[], cb: ExecFileCallback) => void>(),
+    existsSyncMock: vi.fn<(path: fs.PathLike) => boolean>(),
 }));
 
 vi.mock('node:child_process', () => ({
@@ -41,8 +42,8 @@ vi.mock('node:child_process', () => ({
 }));
 
 vi.mock('node:fs', () => ({
-    default: { existsSync: vi.fn() },
-    existsSync: vi.fn(),
+    default: { existsSync: existsSyncMock },
+    existsSync: existsSyncMock,
 }));
 
 /**

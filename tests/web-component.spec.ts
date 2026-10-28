@@ -532,8 +532,7 @@ info:
             expect(el.innerHTML).toContain('Different Paths');
 
             const el2 = createApiDocsElement();
-            el2.innerHTML =
-                '<div class="cdd-layout"><div class="cdd-sidebar-title">Paths</div><span></span></div>';
+            el2.innerHTML = '<div class="cdd-layout"><div class="cdd-sidebar-title">Paths</div><span></span></div>';
             document.body.appendChild(el2);
             expect(el2.querySelector('.cdd-search-input')).not.toBeNull();
         });
@@ -669,7 +668,8 @@ info:
             await el.renderSpec(`openapi: 3.0.0\ninfo:\n  title: Latest Spec\n  version: 1.0.0`);
             resolveSlowCompanion?.({
                 ok: true,
-                text: async () => `arazzo: 1.1.0\ninfo:\n  title: Stale Arazzo\n  version: 1.0.0\nsourceDescriptions: []\nworkflows: []`,
+                text: async () =>
+                    `arazzo: 1.1.0\ninfo:\n  title: Stale Arazzo\n  version: 1.0.0\nsourceDescriptions: []\nworkflows: []`,
             });
             await staleCompanionPromise;
             expect(el.innerHTML).toContain('Latest Spec');
@@ -804,13 +804,17 @@ info:
             const el3 = createApiDocsElement();
             document.body.appendChild(el3);
             await vi.waitFor(() => {
-                expect(el3.querySelector('.cdd-version-select')?.innerHTML).toContain('<option value="1.0.0">1.0.0</option>');
+                expect(el3.querySelector('.cdd-version-select')?.innerHTML).toContain(
+                    '<option value="1.0.0">1.0.0</option>',
+                );
             });
 
             const el3b = createApiDocsElement();
             document.body.appendChild(el3b);
             await vi.waitFor(() => {
-                expect(el3b.querySelector('.cdd-version-select')?.innerHTML).toContain('<option value="latest">latest</option>');
+                expect(el3b.querySelector('.cdd-version-select')?.innerHTML).toContain(
+                    '<option value="latest">latest</option>',
+                );
             });
 
             const genSpyNoHeader = vi.spyOn(aotGenerator, 'generateAOTBodyAndStyles').mockReturnValueOnce({

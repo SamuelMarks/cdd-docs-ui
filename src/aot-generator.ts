@@ -1343,7 +1343,13 @@ export function generateAOTHtml(
     customTranslations: Partial<DocTranslations> = {},
     companionArazzoContent?: string,
 ): string {
-    const fragment = generateAOTBodyAndStyles(specContent, sdkExamples, theme, customTranslations, companionArazzoContent);
+    const fragment = generateAOTBodyAndStyles(
+        specContent,
+        sdkExamples,
+        theme,
+        customTranslations,
+        companionArazzoContent,
+    );
 
     return `<!DOCTYPE html>
 <html lang="${escapeHtml(fragment.locale)}" class="no-js">

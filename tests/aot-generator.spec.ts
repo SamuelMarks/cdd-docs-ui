@@ -48,7 +48,9 @@ describe('renderMarkdown', () => {
         );
         expect(renderMarkdown('line1\n\nline2').trim()).toBe('<p>line1</p>\n<p>line2</p>');
         expect(renderMarkdown('line1\nline2').trim()).toBe('<p>line1\nline2</p>');
-        expect(renderMarkdown('<script>alert(1)</script><p onclick="bad()">safe</p>[bad](javascript:alert(1))')).not.toContain('<script>');
+        expect(
+            renderMarkdown('<script>alert(1)</script><p onclick="bad()">safe</p>[bad](javascript:alert(1))'),
+        ).not.toContain('<script>');
         expect(renderMarkdown('<p onclick="bad()">safe</p>')).not.toContain('onclick');
         expect(renderMarkdown('[bad](javascript:alert(1))')).toContain('href="#"');
         expect(renderMarkdown("<a href='javascript:alert(1)'>bad</a>")).toContain("href='#'");

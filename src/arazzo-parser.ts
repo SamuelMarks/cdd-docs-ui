@@ -3,7 +3,7 @@
  * @module arazzo-parser
  */
 
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import {
     Arazzo110,
     ArazzoInfoObject,
@@ -903,8 +903,7 @@ export function buildWorkflowDag(
     components?: ArazzoComponentsObject,
 ): WorkflowDag {
     const workflows = Array.isArray(workflowsOrSpec) ? workflowsOrSpec : workflowsOrSpec.workflows;
-    const resolvedComponents =
-        components ?? (!Array.isArray(workflowsOrSpec) ? workflowsOrSpec.components : undefined);
+    const resolvedComponents = components ?? (!Array.isArray(workflowsOrSpec) ? workflowsOrSpec.components : undefined);
     const workflowEdges: DagEdge[] = [];
     const stepOrderByWorkflow: Record<string, string[]> = {};
     const stepEdgesByWorkflow: Record<string, DagEdge[]> = {};

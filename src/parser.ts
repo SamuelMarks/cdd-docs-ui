@@ -3,7 +3,7 @@
  * @module parser
  */
 
-import yaml from 'js-yaml';
+import * as yaml from 'js-yaml';
 import {
     DocData,
     CodeExample,
@@ -1249,7 +1249,11 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
             const isWh = Boolean(file.webhookName);
             const targetRoute = file.webhookName || file.route;
             for (const [id, info] of operations) {
-                if (info.isWebhook === isWh && info.route === targetRoute && info.method === file.method.toLowerCase()) {
+                if (
+                    info.isWebhook === isWh &&
+                    info.route === targetRoute &&
+                    info.method === file.method.toLowerCase()
+                ) {
                     matchedId = id;
                     break;
                 }

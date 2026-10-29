@@ -1083,6 +1083,29 @@ describe('OpenAPI 3.2.0 extensions & path item details', () => {
                         put: 123,
                     },
                 },
+                operations: {
+                    invalidOp: 'not-a-record',
+                    getPetById: {
+                        operationId: 'getPetById',
+                        path: '/pets/{id}',
+                        method: 'GET',
+                        code: {
+                            imports: 'using System;',
+                            wrapper_start: 'class Program {',
+                            snippet: 'await client.GetPetByIdAsync(1);',
+                            wrapper_end: '}',
+                        },
+                    },
+                    listPets: {
+                        code: 'await client.ListPetsAsync();',
+                    },
+                    badCodeOp: {
+                        code: 123,
+                    },
+                    directFieldsOp: {
+                        snippet: 'await client.DirectAsync();',
+                    },
+                },
                 webhooks: {
                     hookA: {
                         post: 'hookPost()',

@@ -429,6 +429,36 @@ describe('runner.ts', () => {
             expect(workflowsOnlyObj.endpoints).toEqual({});
             expect(workflowsOnlyObj.workflows?.['onlyWf']).toBe('onlyWfCode()');
 
+            const arrayWrappedCddOutput = parseCDDOutput(
+                JSON.stringify([{ endpoints: { '/rust': { get: 'rustGet()' } } }]),
+            );
+            expect(arrayWrappedCddOutput.endpoints['/rust']?.['get']).toBe('rustGet()');
+
+            const operationsMapObj = parseCDDOutput(
+                JSON.stringify({
+                    operations: {
+                        invalidOp: 'not-a-record',
+                        getPet: {
+                            path: '/pets/{id}',
+                            method: 'GET',
+                            code: { snippet: 'await client.GetPetAsync(1);' },
+                        },
+                        listPets: {
+                            code: 'await client.ListPetsAsync();',
+                        },
+                        badOp: {
+                            code: 123,
+                        },
+                        directOp: {
+                            snippet: 'await client.DirectOpAsync();',
+                        },
+                    },
+                }),
+            );
+            expect(operationsMapObj.endpoints['/pets/{id}']?.['get']).toBe('await client.GetPetAsync(1);');
+            expect(operationsMapObj.endpoints['/listPets']?.['get']).toBe('await client.ListPetsAsync();');
+            expect(operationsMapObj.endpoints['/badOp']?.['get']).toBe('');
+
             // Mock fallback & generateAllSnippets with webhooks and Arazzo workflows
             const specWithWebhooks: OpenAPI320 = {
                 openapi: '3.2.0',

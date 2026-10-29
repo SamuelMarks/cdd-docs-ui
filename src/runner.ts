@@ -71,6 +71,15 @@ export function parseCDDOutput(stdout: string): CDDOutput {
         throw new Error('Failed to parse cdd-ctl output as JSON');
     }
 
+    if (
+        Array.isArray(parsed) &&
+        parsed.length > 0 &&
+        isRecord(parsed[0]) &&
+        (isRecord(parsed[0]['endpoints']) || isRecord(parsed[0]['operations']) || isRecord(parsed[0]['workflows']))
+    ) {
+        parsed = parsed[0];
+    }
+
     if (Array.isArray(parsed)) {
         const endpoints: Record<string, Record<string, string>> = {};
         const workflows: Record<string, string> = {};
@@ -112,7 +121,10 @@ export function parseCDDOutput(stdout: string): CDDOutput {
         return out;
     }
 
-    if (!isRecord(parsed) || (!isRecord(parsed['endpoints']) && !isRecord(parsed['workflows']))) {
+    if (
+        !isRecord(parsed) ||
+        (!isRecord(parsed['endpoints']) && !isRecord(parsed['operations']) && !isRecord(parsed['workflows']))
+    ) {
         throw new Error('Invalid CDDOutput structure: missing endpoints object');
     }
 
@@ -135,6 +147,24 @@ export function parseCDDOutput(stdout: string): CDDOutput {
                 }
             }
             endpoints[pathKey] = validatedMethods;
+        }
+    }
+
+    if (isRecord(parsed['operations'])) {
+        for (const [opKey, opVal] of Object.entries(parsed['operations'])) {
+            if (!isRecord(opVal)) continue;
+            const pathKey = typeof opVal['path'] === 'string' ? opVal['path'] : `/${opKey}`;
+            const methodKey = typeof opVal['method'] === 'string' ? opVal['method'].toLowerCase() : 'get';
+            const codeField = opVal['code'] ?? opVal;
+            const snippet =
+                typeof codeField === 'string'
+                    ? codeField
+                    : isRecord(codeField)
+                      ? assembleStructuredCodeSnippet(codeField)
+                      : '';
+            const routeMap = endpoints[pathKey] ?? {};
+            routeMap[methodKey] = snippet;
+            endpoints[pathKey] = routeMap;
         }
     }
 

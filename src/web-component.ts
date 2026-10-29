@@ -31,7 +31,10 @@ export function normalizeSdkExamplesInput(val: unknown): CodeExample[] {
 
     if (
         isRecord(current) &&
-        (isRecord(current['endpoints']) || isRecord(current['workflows']) || isRecord(current['webhooks']))
+        (isRecord(current['endpoints']) ||
+            isRecord(current['operations']) ||
+            isRecord(current['workflows']) ||
+            isRecord(current['webhooks']))
     ) {
         current = [current];
     }
@@ -60,9 +63,29 @@ export function normalizeSdkExamplesInput(val: unknown): CodeExample[] {
                 const parsed: unknown = JSON.parse(itemContent);
                 if (
                     isRecord(parsed) &&
-                    (isRecord(parsed['endpoints']) || isRecord(parsed['workflows']) || isRecord(parsed['webhooks']))
+                    (isRecord(parsed['endpoints']) ||
+                        isRecord(parsed['operations']) ||
+                        isRecord(parsed['workflows']) ||
+                        isRecord(parsed['webhooks']))
                 ) {
                     extractedExamples.push(...extractExamplesFromCddOutputRecord(parsed, itemLang));
+                    continue;
+                } else if (
+                    Array.isArray(parsed) &&
+                    parsed.some(
+                        b =>
+                            isRecord(b) &&
+                            (isRecord(b['endpoints']) ||
+                                isRecord(b['operations']) ||
+                                isRecord(b['workflows']) ||
+                                isRecord(b['webhooks'])),
+                    )
+                ) {
+                    for (const block of parsed) {
+                        if (!isRecord(block)) continue;
+                        const lang = typeof block['language'] === 'string' ? block['language'] : itemLang;
+                        extractedExamples.push(...extractExamplesFromCddOutputRecord(block, lang));
+                    }
                     continue;
                 } else if (Array.isArray(parsed) && parsed.some(b => isRecord(b) && Array.isArray(b['operations']))) {
                     for (const block of parsed) {
@@ -124,7 +147,12 @@ export function normalizeSdkExamplesInput(val: unknown): CodeExample[] {
             }
         }
 
-        if (isRecord(item['endpoints']) || isRecord(item['workflows']) || isRecord(item['webhooks'])) {
+        if (
+            isRecord(item['endpoints']) ||
+            isRecord(item['operations']) ||
+            isRecord(item['workflows']) ||
+            isRecord(item['webhooks'])
+        ) {
             extractedExamples.push(...extractExamplesFromCddOutputRecord(item, itemLang));
             continue;
         }
@@ -136,6 +164,11 @@ export function normalizeSdkExamplesInput(val: unknown): CodeExample[] {
                 content: itemContent,
                 includeImports: typeof item['includeImports'] === 'boolean' ? item['includeImports'] : undefined,
                 includeWrapping: typeof item['includeWrapping'] === 'boolean' ? item['includeWrapping'] : undefined,
+                operationId: typeof item['operationId'] === 'string' ? item['operationId'] : undefined,
+                route: typeof item['route'] === 'string' ? item['route'] : undefined,
+                method: typeof item['method'] === 'string' ? item['method'] : undefined,
+                webhookName: typeof item['webhookName'] === 'string' ? item['webhookName'] : undefined,
+                workflowId: typeof item['workflowId'] === 'string' ? item['workflowId'] : undefined,
             });
         }
     }
@@ -163,7 +196,26 @@ export function initApiDocs(
         proxy.addEventListener('change', () => {
             const lang = proxy.id.replace('proxy-', '');
             const realInput = container.querySelector<HTMLInputElement>(`#lang-opt-${lang}`);
-            if (realInput) realInput.checked = true;
+            if (realInput) {
+                realInput.checked = true;
+                realInput.dispatchEvent(new Event('change'));
+            }
+        });
+    });
+
+    const langRadios = container.querySelectorAll<HTMLInputElement>('input[name="global-lang"]:not([data-cdd-bound])');
+    langRadios.forEach(radio => {
+        radio.setAttribute('data-cdd-bound', 'true');
+        radio.addEventListener('change', () => {
+            if (radio.checked) {
+                const lang = radio.id.replace('lang-opt-', '');
+                container.dispatchEvent(
+                    new CustomEvent('cdd-language-change', {
+                        bubbles: true,
+                        detail: { language: lang },
+                    }),
+                );
+            }
         });
     });
 
@@ -174,7 +226,10 @@ export function initApiDocs(
         importsProxy.setAttribute('data-cdd-bound', 'true');
         importsProxy.addEventListener('change', () => {
             const realInput = container.querySelector<HTMLInputElement>('#opt-imports');
-            if (realInput) realInput.checked = importsProxy.checked;
+            if (realInput) {
+                realInput.checked = importsProxy.checked;
+                realInput.dispatchEvent(new Event('change'));
+            }
         });
     }
 
@@ -185,8 +240,35 @@ export function initApiDocs(
         wrappingProxy.setAttribute('data-cdd-bound', 'true');
         wrappingProxy.addEventListener('change', () => {
             const realInput = container.querySelector<HTMLInputElement>('#opt-wrapping');
-            if (realInput) realInput.checked = wrappingProxy.checked;
+            if (realInput) {
+                realInput.checked = wrappingProxy.checked;
+                realInput.dispatchEvent(new Event('change'));
+            }
         });
+    }
+
+    const importsInput = container.querySelector<HTMLInputElement>('#opt-imports:not([data-cdd-bound])');
+    const wrappingInput = container.querySelector<HTMLInputElement>('#opt-wrapping:not([data-cdd-bound])');
+    const dispatchOptionsChange = (): void => {
+        const imp = container.querySelector<HTMLInputElement>('#opt-imports');
+        const wrap = container.querySelector<HTMLInputElement>('#opt-wrapping');
+        container.dispatchEvent(
+            new CustomEvent('cdd-docs-options-change', {
+                bubbles: true,
+                detail: {
+                    includeImports: imp ? imp.checked : true,
+                    includeWrapping: wrap ? wrap.checked : true,
+                },
+            }),
+        );
+    };
+    if (importsInput) {
+        importsInput.setAttribute('data-cdd-bound', 'true');
+        importsInput.addEventListener('change', dispatchOptionsChange);
+    }
+    if (wrappingInput) {
+        wrappingInput.setAttribute('data-cdd-bound', 'true');
+        wrappingInput.addEventListener('change', dispatchOptionsChange);
     }
 
     // Theme synchronization and persistence

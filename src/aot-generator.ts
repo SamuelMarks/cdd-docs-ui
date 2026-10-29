@@ -1226,6 +1226,7 @@ export function generateAOTBodyAndStyles(
 
     /* Variant display logic */
     .cdd-variant-block { display: none; }
+    .cdd-lang-block > .cdd-variant-block:only-child { display: block; }
     
     #opt-imports:checked ~ #opt-wrapping:checked ~ .cdd-layout .cdd-variant-block.cdd-show-if-imports.cdd-show-if-wrapping { display: block; }
     #opt-imports:not(:checked) ~ #opt-wrapping:checked ~ .cdd-layout .cdd-variant-block.cdd-hide-if-imports.cdd-show-if-wrapping { display: block; }

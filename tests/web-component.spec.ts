@@ -117,19 +117,75 @@ describe('normalizeSdkExamplesInput', () => {
                 content: 'console.log(1)',
                 includeImports: true,
                 includeWrapping: false,
+                operationId: 'rawOp',
+                route: '/raw',
+                method: 'get',
+                webhookName: 'rawWh',
+                workflowId: 'rawWf',
             },
             {
                 language: 'python',
                 filepath: 'no-content.py',
             },
+            {
+                language: 'csharp',
+                operations: {
+                    opA: { code: 'Client.OpA();' },
+                },
+            },
+            {
+                language: 'csharp',
+                filepath: 'docs.json',
+                content: JSON.stringify({
+                    operations: {
+                        opB: { code: 'Client.OpB();' },
+                    },
+                }),
+            },
+            {
+                language: 'rust',
+                filepath: 'docs.json',
+                content: JSON.stringify([
+                    'invalid-block',
+                    {
+                        language: 'rust',
+                        endpoints: {
+                            '/pets': {
+                                get: {
+                                    default: {
+                                        imports: 'use reqwest::Client;',
+                                        code: 'let client = Client::new();',
+                                    },
+                                },
+                            },
+                        },
+                    },
+                    {
+                        endpoints: {
+                            '/pets': {
+                                post: 'client.post();',
+                            },
+                        },
+                    },
+                ]),
+            },
         ]);
 
         expect(fromDocsJson.some(e => e.language === 'ruby' && e.filepath === '_pets_get')).toBe(true);
+        expect(fromDocsJson.some(e => e.language === 'rust' && e.route === '/pets' && e.method === 'get')).toBe(true);
+        expect(fromDocsJson.some(e => e.language === 'rust' && e.route === '/pets' && e.method === 'post')).toBe(true);
         expect(fromDocsJson.some(e => e.language === 'go' && e.filepath === '_items_post')).toBe(true);
         expect(fromDocsJson.some(e => e.language === 'typescript' && e.filepath === '_inline_delete')).toBe(true);
+        expect(fromDocsJson.some(e => e.language === 'csharp' && e.operationId === 'opA')).toBe(true);
+        expect(fromDocsJson.some(e => e.language === 'csharp' && e.operationId === 'opB')).toBe(true);
         const rawTs = fromDocsJson.find(e => e.filepath === 'raw.ts');
         expect(rawTs?.includeImports).toBe(true);
         expect(rawTs?.includeWrapping).toBe(false);
+        expect(rawTs?.operationId).toBe('rawOp');
+        expect(rawTs?.route).toBe('/raw');
+        expect(rawTs?.method).toBe('get');
+        expect(rawTs?.webhookName).toBe('rawWh');
+        expect(rawTs?.workflowId).toBe('rawWf');
     });
 });
 
@@ -248,6 +304,9 @@ describe('progressive-enhancement', () => {
         rustProxy.dispatchEvent(new Event('change'));
         expect(rustReal.checked).toBe(true);
 
+        rustReal.checked = false;
+        rustReal.dispatchEvent(new Event('change'));
+
         const importsProxy = getRequiredElement(
             document,
             'input[data-onchange-proxy*="opt-imports"]',
@@ -274,6 +333,7 @@ describe('progressive-enhancement', () => {
         rustReal.remove();
         importsReal.remove();
         wrappingReal.remove();
+        importsReal.dispatchEvent(new Event('change'));
         rustProxy.dispatchEvent(new Event('change'));
         importsProxy.dispatchEvent(new Event('change'));
         wrappingProxy.dispatchEvent(new Event('change'));

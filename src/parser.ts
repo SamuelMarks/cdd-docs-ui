@@ -204,8 +204,8 @@ export function expandStructuredCodeVariants(
 }
 
 /**
- * Extracts `CodeExample` items from a `CDDOutput`-shaped record (`endpoints`, `webhooks`, `workflows`).
- * @param rec The record containing `endpoints`, `webhooks`, and/or `workflows`.
+ * Extracts `CodeExample` items from a `CDDOutput`-shaped record (`endpoints`, `operations`, `webhooks`, `workflows`).
+ * @param rec The record containing `endpoints`, `operations`, `webhooks`, and/or `workflows`.
  * @param lang The programming language identifier.
  * @returns Array of extracted `CodeExample` objects.
  */
@@ -237,6 +237,33 @@ export function extractExamplesFromCddOutputRecord(rec: Record<string, unknown>,
 
     if (isRecord(rec['endpoints'])) {
         extractRouteMap(rec['endpoints'], false);
+    }
+    if (isRecord(rec['operations'])) {
+        for (const [opKey, opVal] of Object.entries(rec['operations'])) {
+            if (!isRecord(opVal)) continue;
+            const opId = typeof opVal['operationId'] === 'string' ? opVal['operationId'] : opKey;
+            const opRoute = typeof opVal['path'] === 'string' ? opVal['path'] : undefined;
+            const opMethod = typeof opVal['method'] === 'string' ? opVal['method'].toLowerCase() : undefined;
+            const filepath = `op_${opId.replace(/[^a-zA-Z0-9]/g, '_')}`;
+            const meta: CodeExampleMetadata = {
+                operationId: opId,
+                route: opRoute,
+                method: opMethod,
+            };
+            const codeField = opVal['code'] ?? opVal;
+            if (typeof codeField === 'string') {
+                out.push({
+                    language: lang,
+                    filepath,
+                    content: codeField,
+                    includeImports: false,
+                    includeWrapping: false,
+                    ...meta,
+                });
+            } else if (isRecord(codeField)) {
+                out.push(...expandStructuredCodeVariants(codeField, lang, filepath, meta));
+            }
+        }
     }
     if (isRecord(rec['webhooks'])) {
         extractRouteMap(rec['webhooks'], true);

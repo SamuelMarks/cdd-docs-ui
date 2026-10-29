@@ -91,6 +91,347 @@ export function normalizeSpecUrl(url: string): string {
 }
 
 /**
+ * Checks whether a single trimmed source line is an import, include, require, using, package, or shell source statement.
+ * @param trimmed The trimmed line of source code.
+ * @returns True if the line is an import/include/package declaration.
+ */
+function isImportOrPackageLine(trimmed: string): boolean {
+    return (
+        /^<\?php\b/.test(trimmed) ||
+        /^declare\s*\(\s*strict_types/.test(trimmed) ||
+        /^package\s+[A-Za-z0-9_.]+;?$/.test(trimmed) ||
+        /^namespace\s+[A-Za-z0-9_\\]+;$/.test(trimmed) ||
+        /^#include\s+[<"].+[>"]$/.test(trimmed) ||
+        /^import\s+/.test(trimmed) ||
+        /^from\s+[A-Za-z0-9_.]+\s+import\s+/.test(trimmed) ||
+        /^using\s+[A-Za-z0-9_.]+;$/.test(trimmed) ||
+        /^use\s+[A-Za-z0-9_:\\{}*,\s]+;$/.test(trimmed) ||
+        /^require(?:_once|_relative)?[\s(]+['"]/.test(trimmed) ||
+        /^(?:\.|source)\s+\.?\/[^\s]+$/.test(trimmed)
+    );
+}
+
+/**
+ * Decomposes a flat source code snippet string into structured `{ imports, wrapper_start, snippet, wrapper_end }`
+ * components when imports or outer boilerplate wrappers (`main`, `Example`, `execute`, etc.) are detected.
+ * @param rawCode The flat code string to inspect and decompose.
+ * @returns A structured record compatible with `expandStructuredCodeVariants`.
+ */
+export function decomposeFlatCodeString(rawCode: string): Record<string, unknown> {
+    const normalized = rawCode.replace(/\r\n/g, '\n').trim();
+    if (!normalized) {
+        return { snippet: '' };
+    }
+
+    const lines = normalized.split('\n');
+    const importLines: string[] = [];
+    let idx = 0;
+
+    // 1. Collect leading import / include / package / require / source lines
+    while (idx < lines.length) {
+        const line = lines.slice(idx, idx + 1).join('');
+        const trimmed = line.trim();
+        if (!trimmed) {
+            idx++;
+            continue;
+        }
+        if (isImportOrPackageLine(trimmed)) {
+            importLines.push(line);
+            idx++;
+            // Handle Go multi-line `import ( ... )` block
+            if (/^import\s*\($/.test(trimmed)) {
+                while (idx < lines.length) {
+                    const impLine = lines.slice(idx, idx + 1).join('');
+                    importLines.push(impLine);
+                    idx++;
+                    if (impLine.trim() === ')') break;
+                }
+            }
+            continue;
+        }
+        break;
+    }
+
+    const bodyLines = lines.slice(idx);
+    const wrapperStartLines: string[] = [];
+    const wrapperEndLines: string[] = [];
+
+    // 2. Detect outer boilerplate wrappers (`def main(): ... if __name__ == "__main__": main()`, `int main`, `func main`, `class Example`, `export async function execute()`, `main() { ... }`)
+    if (bodyLines.length >= 3) {
+        const firstTrimmed = bodyLines.slice(0, 1).join('').trim();
+        const lastTrimmed = bodyLines.slice(-1).join('').trim();
+
+        // Python `def main():` + trailing `if __name__ == "__main__":\n    main()`
+        if (/^(?:async\s+)?def\s+main\s*\(/.test(firstTrimmed)) {
+            wrapperStartLines.push(...bodyLines.splice(0, 1));
+            if (bodyLines.slice(-1).join('').trim() === 'main()') {
+                wrapperEndLines.unshift(...bodyLines.splice(-2, 2));
+            }
+            if (/^\w+\s*=\s*\w*Client\s*\(/.test(bodyLines.slice(0, 1).join('').trim())) {
+                wrapperStartLines.push(...bodyLines.splice(0, 1));
+            }
+        } else if (/^def\s+main\b/.test(firstTrimmed)) {
+            // Ruby `def main ... end\nmain if __FILE__ == $0`
+            wrapperStartLines.push(...bodyLines.splice(0, 1));
+            if (/^main\s+if\s+__FILE__\s*==\s*\$0/.test(lastTrimmed)) {
+                wrapperEndLines.unshift(...bodyLines.splice(-1, 1));
+            }
+            while (!bodyLines.slice(-1).join('').trim()) {
+                bodyLines.pop();
+            }
+            wrapperEndLines.unshift(...bodyLines.splice(-1, 1));
+            if (/^\w+\s*=\s*\w+\.new\b/.test(bodyLines.slice(0, 1).join('').trim())) {
+                wrapperStartLines.push(...bodyLines.splice(0, 1));
+            }
+        } else if (/^main\s*\(\)\s*\{$/.test(firstTrimmed)) {
+            // Shell `main() { ... }\nmain "$@"`
+            wrapperStartLines.push(...bodyLines.splice(0, 1));
+            if (/^main\s+"\$@"$/.test(lastTrimmed)) {
+                wrapperEndLines.unshift(...bodyLines.splice(-1, 1));
+            }
+            while (!bodyLines.slice(-1).join('').trim()) {
+                bodyLines.pop();
+            }
+            wrapperEndLines.unshift(...bodyLines.splice(-1, 1));
+        } else if (
+            // C / C++ / Go / Rust / Kotlin / TS / Java / C# / Swift brace-delimited main or Example wrapper
+            /^(?:int\s+main\s*\(|func\s+main\s*\(|suspend\s+fun\s+main\s*\(|fun\s+main\s*\(|#\[tokio::main\]|async\s+fn\s+main\s*\(|export\s+(?:async\s+)?function\s+(?:execute|ExampleComponent)\s*\(|@Component\b|@main\b|<script\s+setup>|(?:public\s+)?class\s+(?:Example|Program)\b)/.test(
+                firstTrimmed,
+            ) &&
+            (lastTrimmed === '}' || lastTrimmed === '</script>')
+        ) {
+            wrapperStartLines.push(...bodyLines.splice(0, 1));
+            wrapperEndLines.unshift(...bodyLines.splice(-1, 1));
+
+            // Peel nested class -> main/execute wrapper if present
+            while (
+                bodyLines.length >= 3 &&
+                /^(?:public\s+static\s+(?:async\s+)?(?:void|Task)\s+Main|public\s+static\s+void\s+main\s*\(|static\s+func\s+main\s*\(|export\s+class\s+\w+|private\s+readonly\s+\w+|async\s+execute\s*\(|async\s+function\s+execute\s*\(|struct\s+Example\b|async\s+fn\s+main\s*\(|try\s*\{)/.test(
+                    bodyLines.slice(0, 1).join('').trim(),
+                )
+            ) {
+                wrapperStartLines.push(...bodyLines.splice(0, 1));
+                if (/^\}\s*catch\b/.test(bodyLines.slice(-3, -2).join('').trim())) {
+                    wrapperEndLines.unshift(...bodyLines.splice(-3, 3));
+                } else {
+                    wrapperEndLines.unshift(...bodyLines.splice(-1, 1));
+                }
+            }
+
+            // Peel leading client initialization line into wrapper_start if at least one statement remains in snippet
+            if (
+                bodyLines.length >= 2 &&
+                /^(?:const|let|var|val|auto|struct\s+\w+)\s+\w+\s*(?:=[^;]+;?|;\s*$)/.test(
+                    bodyLines.slice(0, 1).join('').trim(),
+                )
+            ) {
+                wrapperStartLines.push(...bodyLines.splice(0, 1));
+                if (/^api_init\s*\(/.test(bodyLines.slice(0, 1).join('').trim())) {
+                    wrapperStartLines.push(...bodyLines.splice(0, 1));
+                }
+            }
+
+            // Peel trailing return / Ok(()) / api_cleanup into wrapper_end if at least one statement remains in snippet
+            while (
+                bodyLines.length >= 2 &&
+                /^(?:return\s+(?:0|CDD_C_SUCCESS)\s*;|Ok\(\(\)\)|api_cleanup\s*\()/.test(
+                    bodyLines.slice(-1).join('').trim(),
+                )
+            ) {
+                wrapperEndLines.unshift(...bodyLines.splice(-1, 1));
+            }
+        }
+    }
+
+    // Dedent the core snippet lines if an outer wrapper was stripped
+    let snippetStr = bodyLines.join('\n').trim();
+    if (wrapperStartLines.length > 0) {
+        const nonEmptyLines = bodyLines.filter(l => l.trim().length > 0);
+        const minIndent = nonEmptyLines.reduce((min, l) => {
+            const trimmedLen = l.trimStart().length;
+            return Math.min(min, l.length - trimmedLen);
+        }, Infinity);
+        snippetStr = bodyLines
+            .map(l => l.slice(minIndent))
+            .join('\n')
+            .trim();
+    }
+
+    const result: Record<string, unknown> = {
+        snippet: snippetStr,
+    };
+    if (importLines.length > 0) {
+        result['imports'] = importLines.join('\n').trim();
+    }
+    if (wrapperStartLines.length > 0) {
+        result['wrapper_start'] = wrapperStartLines.join('\n').trim();
+    }
+    if (wrapperEndLines.length > 0) {
+        result['wrapper_end'] = wrapperEndLines.join('\n').trim();
+    }
+    return result;
+}
+
+/**
+ * Checks whether a filepath belongs to a project configuration, build manifest, test suite, or model definition file
+ * that should never be displayed as an endpoint SDK usage snippet.
+ * @param filepath The file path to inspect.
+ * @returns True if the file is non-snippet scaffolding/config/test code.
+ */
+export function isScaffoldingOrNonSnippetFile(filepath: string): boolean {
+    const normalized = filepath.replace(/\\/g, '/').toLowerCase();
+    const slashIdx = normalized.lastIndexOf('/');
+    const basename = slashIdx !== -1 ? normalized.slice(slashIdx + 1) : normalized;
+
+    if (
+        normalized.startsWith('.github/') ||
+        normalized.includes('/.github/') ||
+        normalized.includes('/tests/') ||
+        normalized.includes('/test/') ||
+        normalized.includes('/__tests__/') ||
+        normalized.includes('/models/') ||
+        normalized.includes('/schemas/')
+    ) {
+        return true;
+    }
+
+    const exactExcludedNames = new Set([
+        'cargo.toml',
+        'cargo.lock',
+        'cmakelists.txt',
+        'makefile',
+        'package.json',
+        'package-lock.json',
+        'tsconfig.json',
+        'composer.json',
+        'gemfile',
+        'build.gradle',
+        'build.gradle.kts',
+        'settings.gradle',
+        'settings.gradle.kts',
+        'pom.xml',
+        'package.swift',
+        'go.mod',
+        'go.sum',
+        'pyproject.toml',
+        'setup.py',
+        'requirements.txt',
+        'readme.md',
+        '.gitignore',
+        'dockerfile',
+    ]);
+    if (exactExcludedNames.has(basename)) {
+        return true;
+    }
+
+    return /\.(?:md|toml|lock|csproj|sln|ya?ml|spec\.ts|test\.ts)$|(?:_test\.go|_test\.py|test\.java|test\.kt|tests\.cs|tests\.swift)$|^test_/.test(
+        basename,
+    );
+}
+
+/**
+ * Extracts a concise per-operation SDK snippet from a raw multi-operation SDK source file when
+ * full `to_sdk` files are supplied instead of `to_docs_json` output.
+ * @param content Full source file content.
+ * @param operationId Optional target `operationId`.
+ * @param route Target HTTP route path (e.g. `'/pets'`).
+ * @param method Target lowercase HTTP method (e.g. `'get'`).
+ * @returns The extracted concise snippet or `null` if the operation does not appear in `content`.
+ */
+export function extractOperationSnippetFromSdkFile(
+    content: string,
+    operationId: string | undefined,
+    route: string,
+    method: string,
+): string | null {
+    const lines = content.replace(/\r\n/g, '\n').split('\n');
+    // If the content is already a concise snippet (<= 25 lines), return it directly
+    if (lines.length <= 25) {
+        return content;
+    }
+
+    const opVariants: string[] = [];
+    if (operationId) {
+        const snake = operationId.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+        const pascal = operationId.charAt(0).toUpperCase() + operationId.slice(1);
+        for (const v of new Set([operationId, snake, pascal])) {
+            opVariants.push(v);
+        }
+    }
+
+    let matchLineIdx = -1;
+
+    // 1. Look for function/method declaration line matching operationId
+    for (const variant of opVariants) {
+        const escaped = variant.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const declRegex = new RegExp(
+            `(?:\\bfn\\b|\\bfunc\\b|\\bdef\\b|\\bfun\\b|\\bfunction\\b|\\basync\\b|\\bpublic\\b|\\bstatic\\b)\\s+[^\\n]*\\b${escaped}\\b|\\b${escaped}\\s*\\(`,
+            'i',
+        );
+        for (let i = 0; i < lines.length; i++) {
+            if (declRegex.test(lines.slice(i, i + 1).join(''))) {
+                matchLineIdx = i;
+                break;
+            }
+        }
+        if (matchLineIdx !== -1) break;
+    }
+
+    // 2. Fallback: look for a line containing the exact route path and HTTP method nearby
+    if (matchLineIdx === -1) {
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines.slice(i, i + 1).join('');
+            if (line.includes(route)) {
+                const windowStart = Math.max(0, i - 6);
+                const windowEnd = Math.min(lines.length - 1, i + 6);
+                const windowText = lines
+                    .slice(windowStart, windowEnd + 1)
+                    .join('\n')
+                    .toLowerCase();
+                if (windowText.includes(method.toLowerCase())) {
+                    matchLineIdx = windowStart;
+                    for (let j = i; j >= windowStart; j--) {
+                        if (/\b(?:fn|func|def|fun|function|public|async)\b/.test(lines.slice(j, j + 1).join(''))) {
+                            matchLineIdx = j;
+                            break;
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    if (matchLineIdx === -1) {
+        return null;
+    }
+
+    // Extract a concise block (up to 15 lines or until balanced closing brace)
+    const maxEnd = Math.min(lines.length, matchLineIdx + 15);
+    const extracted: string[] = [];
+    let braceDepth = 0;
+    let sawOpenBrace = false;
+
+    for (let i = matchLineIdx; i < maxEnd; i++) {
+        const line = lines.slice(i, i + 1).join('');
+        extracted.push(line);
+        for (const ch of line) {
+            if (ch === '{') {
+                braceDepth++;
+                sawOpenBrace = true;
+            } else if (ch === '}') {
+                braceDepth--;
+            }
+        }
+        if (sawOpenBrace && braceDepth <= 0) {
+            break;
+        }
+    }
+
+    return extracted.join('\n').trim();
+}
+
+/**
  * Metadata fields for associating a `CodeExample` with its target operation, webhook, or workflow.
  */
 export interface CodeExampleMetadata {
@@ -211,6 +552,28 @@ export function expandStructuredCodeVariants(
  */
 export function extractExamplesFromCddOutputRecord(rec: Record<string, unknown>, lang: string): CodeExample[] {
     const out: CodeExample[] = [];
+    const expandStringOrRecord = (snippet: unknown, filepath: string, meta: CodeExampleMetadata): CodeExample[] => {
+        if (typeof snippet === 'string') {
+            if (!snippet.trim()) {
+                return [
+                    {
+                        language: lang,
+                        filepath,
+                        content: snippet,
+                        includeImports: false,
+                        includeWrapping: false,
+                        ...meta,
+                    },
+                ];
+            }
+            return expandStructuredCodeVariants(decomposeFlatCodeString(snippet), lang, filepath, meta);
+        }
+        if (isRecord(snippet)) {
+            return expandStructuredCodeVariants(snippet, lang, filepath, meta);
+        }
+        return [];
+    };
+
     const extractRouteMap = (routeMap: Record<string, unknown>, isWebhook: boolean): void => {
         for (const [routePath, methods] of Object.entries(routeMap)) {
             if (!isRecord(methods)) continue;
@@ -219,18 +582,7 @@ export function extractExamplesFromCddOutputRecord(rec: Record<string, unknown>,
                 const meta: CodeExampleMetadata = isWebhook
                     ? { webhookName: routePath, method: method.toLowerCase() }
                     : { route: routePath, method: method.toLowerCase() };
-                if (typeof snippet === 'string') {
-                    out.push({
-                        language: lang,
-                        filepath,
-                        content: snippet,
-                        includeImports: false,
-                        includeWrapping: false,
-                        ...meta,
-                    });
-                } else if (isRecord(snippet)) {
-                    out.push(...expandStructuredCodeVariants(snippet, lang, filepath, meta));
-                }
+                out.push(...expandStringOrRecord(snippet, filepath, meta));
             }
         }
     };
@@ -251,18 +603,7 @@ export function extractExamplesFromCddOutputRecord(rec: Record<string, unknown>,
                 method: opMethod,
             };
             const codeField = opVal['code'] ?? opVal;
-            if (typeof codeField === 'string') {
-                out.push({
-                    language: lang,
-                    filepath,
-                    content: codeField,
-                    includeImports: false,
-                    includeWrapping: false,
-                    ...meta,
-                });
-            } else if (isRecord(codeField)) {
-                out.push(...expandStructuredCodeVariants(codeField, lang, filepath, meta));
-            }
+            out.push(...expandStringOrRecord(codeField, filepath, meta));
         }
     }
     if (isRecord(rec['webhooks'])) {
@@ -272,18 +613,7 @@ export function extractExamplesFromCddOutputRecord(rec: Record<string, unknown>,
         for (const [wfId, snippet] of Object.entries(rec['workflows'])) {
             const filepath = `workflow_${wfId}`;
             const meta: CodeExampleMetadata = { workflowId: wfId };
-            if (typeof snippet === 'string') {
-                out.push({
-                    language: lang,
-                    filepath,
-                    content: snippet,
-                    includeImports: false,
-                    includeWrapping: false,
-                    ...meta,
-                });
-            } else if (isRecord(snippet)) {
-                out.push(...expandStructuredCodeVariants(snippet, lang, filepath, meta));
-            }
+            out.push(...expandStringOrRecord(snippet, filepath, meta));
         }
     }
     return out;
@@ -1232,6 +1562,15 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
     );
 
     for (const file of generatedFiles) {
+        if (
+            !file.operationId &&
+            !file.route &&
+            !file.webhookName &&
+            !file.workflowId &&
+            isScaffoldingOrNonSnippetFile(file.filepath)
+        ) {
+            continue;
+        }
         const normalizedFilepath = file.filepath.toLowerCase();
 
         // Check if this example matches an Arazzo workflow first
@@ -1309,9 +1648,42 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
         }
 
         if (matchedId) {
+            const matchedInfo = operationMap[matchedId];
+            let fileToStore = file;
+            if (matchedInfo && file.content.split('\n').length > 25) {
+                const sliced = extractOperationSnippetFromSdkFile(
+                    file.content,
+                    matchedInfo.op.operationId,
+                    matchedInfo.route,
+                    matchedInfo.method,
+                );
+                fileToStore = { ...file, content: sliced ?? file.content };
+            }
             const list = docData.codeExamples[matchedId] ?? [];
-            list.push(file);
+            list.push(fileToStore);
             docData.codeExamples[matchedId] = list;
+        } else if (file.content.split('\n').length > 1) {
+            // 3. If a raw multi-operation SDK client file (e.g. `client.py`, `api.ts`) was passed from `to_sdk`,
+            // extract concise per-operation snippets for any operation found inside the file.
+            for (const [id, info] of operations) {
+                const sliced = extractOperationSnippetFromSdkFile(
+                    file.content,
+                    info.op.operationId,
+                    info.route,
+                    info.method,
+                );
+                if (sliced) {
+                    const list = docData.codeExamples[id] ?? [];
+                    list.push({
+                        ...file,
+                        content: sliced,
+                        operationId: id,
+                        route: info.route,
+                        method: info.method,
+                    });
+                    docData.codeExamples[id] = list;
+                }
+            }
         }
     }
 }

@@ -25,6 +25,7 @@ import {
 } from './types';
 import { normalizeSpec, mapSdkExamples, isReference, getPathOperations } from './parser';
 import { isSelectorObject } from './arazzo-parser';
+import { highlightCode } from './highlighter';
 
 /**
  * Escapes HTML special characters (`&`, `<`, `>`, `"`, `'`) to prevent XSS and broken markup.
@@ -353,7 +354,7 @@ export function renderCodeAside(
                 <div class="cdd-tab-content cdd-tab-content-curl">
                   <div style="position: relative;">
                     <button class="cdd-copy-btn">${escapeHtml(t.copy)}</button>
-                    <pre><code class="language-bash">${escapeHtml(curlOrCliPreview)}</code></pre>
+                    <pre><code class="language-bash" data-raw-code="${escapeHtml(curlOrCliPreview)}">${highlightCode(curlOrCliPreview, 'bash')}</code></pre>
                   </div>
                 </div>
                 <div class="cdd-tab-content cdd-tab-content-sdk">
@@ -378,7 +379,7 @@ export function renderCodeAside(
                           <div class="cdd-variant-block ${importsClass} ${wrappingClass}">
                             <div style="position: relative;">
                               <button class="cdd-copy-btn">${escapeHtml(t.copy)}</button>
-                              <pre><code class="language-${escapeHtml(prismLang)}">${escapeHtml(ex.content)}</code></pre>
+                              <pre><code class="language-${escapeHtml(prismLang)}" data-raw-code="${escapeHtml(ex.content)}">${highlightCode(ex.content, ex.language)}</code></pre>
                             </div>
                           </div>
                         `;
@@ -500,7 +501,7 @@ export function renderWorkflowSection(
                 ? `<h4 class="cdd-step-subtitle">${escapeHtml(t.stepRequestBodyHeading)}${st.requestBody.contentType ? ` (<code>${escapeHtml(st.requestBody.contentType)}</code>)` : ''}</h4>
                    ${
                        st.requestBody.payload !== undefined
-                           ? `<pre class="cdd-payload-pre"><code>${escapeHtml(typeof st.requestBody.payload === 'string' ? st.requestBody.payload : JSON.stringify(st.requestBody.payload, null, 2))}</code></pre>`
+                           ? `<pre class="cdd-payload-pre"><code class="language-json">${highlightCode(typeof st.requestBody.payload === 'string' ? st.requestBody.payload : JSON.stringify(st.requestBody.payload, null, 2), 'json')}</code></pre>`
                            : ''
                    }
                    ${
@@ -1048,6 +1049,14 @@ export function generateAOTBodyAndStyles(
     --cdd-on-surface-variant: #45464f;
     --cdd-outline: #757780;
     --cdd-outline-variant: #c5c6d0;
+    --cdd-tok-keyword: #c586c0;
+    --cdd-tok-string: #ce9178;
+    --cdd-tok-comment: #6a9955;
+    --cdd-tok-number: #b5cea8;
+    --cdd-tok-function: #dcdcaa;
+    --cdd-tok-type: #4ec9b0;
+    --cdd-tok-variable: #9cdcfe;
+    --cdd-tok-operator: #d4d4d4;
   `;
 
     const darkVars = `
@@ -1059,6 +1068,14 @@ export function generateAOTBodyAndStyles(
     --cdd-on-surface-variant: #c5c6d0;
     --cdd-outline: #8f9099;
     --cdd-outline-variant: #45464f;
+    --cdd-tok-keyword: #d8a0df;
+    --cdd-tok-string: #f0a890;
+    --cdd-tok-comment: #7ec699;
+    --cdd-tok-number: #d7ba7d;
+    --cdd-tok-function: #dcdcaa;
+    --cdd-tok-type: #4ec9b0;
+    --cdd-tok-variable: #9cdcfe;
+    --cdd-tok-operator: #e3e2e6;
   `;
 
     const safeLanguages = languages.map(sanitizeCssIdent);
@@ -1075,7 +1092,7 @@ export function generateAOTBodyAndStyles(
     .no-js .cdd-code-tabs .cdd-tab-content:before { content: "Code block: "; font-size: 0.75rem; opacity: 0.7; }
   </style>
   <style>
-    :root {
+    :root, :host {
       ${lightVars}
       --cdd-get: #00668b; --cdd-get-bg: #c2e8ff;
       --cdd-post: #006e2c; --cdd-post-bg: #b4f3b0;
@@ -1093,9 +1110,21 @@ export function generateAOTBodyAndStyles(
       --cdd-display-wrapping: block;
     }
 
-    #opt-dark-mode:checked ~ .cdd-layout {
+    #opt-dark-mode:checked ~ .cdd-layout,
+    [data-theme="dark"],
+    :host([data-theme="dark"]),
+    :host([theme="dark"]) {
       ${darkVars}
     }
+
+    .cdd-tok-keyword { color: var(--cdd-tok-keyword); font-weight: 500; }
+    .cdd-tok-string { color: var(--cdd-tok-string); }
+    .cdd-tok-comment { color: var(--cdd-tok-comment); font-style: italic; }
+    .cdd-tok-number { color: var(--cdd-tok-number); }
+    .cdd-tok-function { color: var(--cdd-tok-function); }
+    .cdd-tok-type { color: var(--cdd-tok-type); }
+    .cdd-tok-variable { color: var(--cdd-tok-variable); }
+    .cdd-tok-operator { color: var(--cdd-tok-operator); }
 
     ${safeLanguages.map(lang => `#lang-opt-${lang}:checked ~ .cdd-layout .cdd-show-if-${lang} { display: block; }`).join('\n')}
     #opt-imports:checked ~ * { --cdd-display-imports: block; }

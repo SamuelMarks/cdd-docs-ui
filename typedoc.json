@@ -4,6 +4,7 @@
         "src/arazzo-parser.ts",
         "src/arazzo-types.ts",
         "src/cli.ts",
+        "src/highlighter.ts",
         "src/openapi-types.ts",
         "src/parser.ts",
         "src/runner.ts",

@@ -362,7 +362,8 @@ export function initApiDocs(
             if (!codeEl) return;
 
             try {
-                await navigator.clipboard.writeText(codeEl.textContent ?? '');
+                const rawCode = codeEl.getAttribute('data-raw-code') ?? codeEl.textContent ?? '';
+                await navigator.clipboard.writeText(rawCode);
                 const originalText = btn.textContent;
                 btn.textContent = t.copied;
                 btn.classList.add('cdd-copied');

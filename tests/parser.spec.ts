@@ -12,6 +12,9 @@ import {
     normalizeSpecUrl,
     expandStructuredCodeVariants,
     extractExamplesFromCddOutputRecord,
+    decomposeFlatCodeString,
+    isScaffoldingOrNonSnippetFile,
+    extractOperationSnippetFromSdkFile,
     toJsonValue,
     parseInfo,
     parseServer,
@@ -1174,5 +1177,246 @@ describe('OpenAPI 3.2.0 extensions & path item details', () => {
         expect(overlapDoc.codeExamples['webhook-post-userHook']?.[0]?.content).toBe('wh()');
         expect(overlapDoc.workflowCodeExamples?.['order']?.[0]?.content).toBe('wfOrder()');
         expect(overlapDoc.workflowCodeExamples?.['orderItem']?.[0]?.content).toBe('wfOrderItem()');
+    });
+
+    it('should decompose flat-string snippets across all languages into structured imports, wrapper_start, snippet, and wrapper_end', () => {
+        expect(decomposeFlatCodeString('   ')).toEqual({ snippet: '' });
+
+        // Python with imports + def main() + client init + if __name__ == "__main__"
+        const pyDecomposed = decomposeFlatCodeString(
+            [
+                'import json',
+                'from generated_client import Client',
+                '',
+                'def main():',
+                '    client = Client(base_url="https://api.example.com")',
+                '    response = client.list_pets()',
+                '    print(response)',
+                '',
+                'if __name__ == "__main__":',
+                '    main()',
+            ].join('\n'),
+        );
+        expect(pyDecomposed['imports']).toContain('from generated_client import Client');
+        expect(pyDecomposed['wrapper_start']).toContain('def main():');
+        expect(pyDecomposed['wrapper_start']).toContain('client = Client');
+        expect(pyDecomposed['snippet']).toBe('response = client.list_pets()\nprint(response)');
+        expect(pyDecomposed['wrapper_end']).toContain('if __name__ == "__main__":');
+
+        // Ruby with require + def main ... end + main if __FILE__ == $0
+        const rbDecomposed = decomposeFlatCodeString(
+            [
+                "require 'json'",
+                "require 'my_api_client'",
+                '',
+                'def main',
+                "  client = MyApiClient.new('https://api.example.com')",
+                '  response = client.list_pets',
+                '  puts response.inspect',
+                'end',
+                '',
+                'main if __FILE__ == $0',
+            ].join('\n'),
+        );
+        expect(rbDecomposed['imports']).toContain("require 'my_api_client'");
+        expect(rbDecomposed['wrapper_start']).toContain('def main');
+        expect(rbDecomposed['snippet']).toBe('response = client.list_pets\nputs response.inspect');
+        expect(rbDecomposed['wrapper_end']).toContain('main if __FILE__ == $0');
+
+        // Shell with `. ./routes.sh` + `main() { ... }\nmain "$@"`
+        const shDecomposed = decomposeFlatCodeString(
+            ['. ./routes.sh', '', 'main() {', '  listPets "arg1"', '}', '', 'main "$@"'].join('\n'),
+        );
+        expect(shDecomposed['imports']).toBe('. ./routes.sh');
+        expect(shDecomposed['wrapper_start']).toBe('main() {');
+        expect(shDecomposed['snippet']).toBe('listPets "arg1"');
+        expect(shDecomposed['wrapper_end']).toContain('main "$@"');
+
+        // Go with `package main` + multi-line `import ( ... )` + `func main() { ... }`
+        const goDecomposed = decomposeFlatCodeString(
+            [
+                'package main',
+                '',
+                'import (',
+                '\t"fmt"',
+                ')',
+                '',
+                'func main() {',
+                '\tvar client = NewClient()',
+                '\tres := client.ListPets()',
+                '\tfmt.Println(res)',
+                '}',
+            ].join('\n'),
+        );
+        expect(goDecomposed['imports']).toContain('package main');
+        expect(goDecomposed['imports']).toContain('"fmt"');
+        expect(goDecomposed['wrapper_start']).toContain('func main() {');
+        expect(goDecomposed['snippet']).toBe('res := client.ListPets()\nfmt.Println(res)');
+        expect(goDecomposed['wrapper_end']).toBe('}');
+
+        // C with `#include` + `int main(void)` + `struct HttpClient` + `api_init` + `api_cleanup` + `return CDD_C_SUCCESS;`
+        const cDecomposed = decomposeFlatCodeString(
+            [
+                '#include "generated_client.h"',
+                '#include <stdio.h>',
+                '',
+                'int main(void) {',
+                '  struct HttpClient client;',
+                '  api_init(&client, "https://api.example.com");',
+                '  api_list_pets(&client);',
+                '  api_cleanup(&client);',
+                '  return CDD_C_SUCCESS;',
+                '}',
+            ].join('\n'),
+        );
+        expect(cDecomposed['imports']).toContain('#include "generated_client.h"');
+        expect(cDecomposed['wrapper_start']).toContain('api_init');
+        expect(cDecomposed['snippet']).toBe('api_list_pets(&client);');
+        expect(cDecomposed['wrapper_end']).toContain('api_cleanup');
+
+        // Java with `import` + `public class Example` + `public static void main` + `try { ... } catch (...) { ... }`
+        const javaDecomposed = decomposeFlatCodeString(
+            [
+                'import my.api.ApiClient;',
+                'import my.api.ApiException;',
+                '',
+                'public class Example {',
+                '    public static void main(String[] args) {',
+                '        try {',
+                '            var client = new ApiClient();',
+                '            client.listPets();',
+                '        } catch (ApiException e) {',
+                '            e.printStackTrace();',
+                '        }',
+                '    }',
+                '}',
+            ].join('\n'),
+        );
+        expect(javaDecomposed['imports']).toContain('import my.api.ApiClient;');
+        expect(javaDecomposed['wrapper_start']).toContain('public static void main');
+        expect(javaDecomposed['snippet']).toBe('client.listPets();');
+        expect(javaDecomposed['wrapper_end']).toContain('catch (ApiException e)');
+
+        // PHP / C# / Rust / Vue imports & wrappers
+        const phpDecomposed = decomposeFlatCodeString(
+            [
+                '<?php',
+                'declare(strict_types=1);',
+                'namespace App\\Example;',
+                'use App\\ApiClient;',
+                "require_once 'vendor/autoload.php';",
+                '$client = new ApiClient();',
+            ].join('\n'),
+        );
+        expect(phpDecomposed['imports']).toContain('<?php');
+        expect(phpDecomposed['imports']).toContain('use App\\ApiClient;');
+
+        const csDecomposed = decomposeFlatCodeString(
+            [
+                'using System;',
+                'public class Program {',
+                '    public static async Task Main() {',
+                '        await Run();',
+                '    }',
+                '}',
+            ].join('\n'),
+        );
+        expect(csDecomposed['imports']).toBe('using System;');
+        expect(csDecomposed['snippet']).toBe('await Run();');
+
+        // Edge cases: Python def main without trailing main() or client init, Ruby def main without main if __FILE__ or client init, Shell main() without main "$@", Vue <script setup>, and non-wrapper 3-line block
+        expect(decomposeFlatCodeString('def main():\n    do_work()\n    return 1')['snippet']).toBe(
+            'do_work()\nreturn 1',
+        );
+        expect(decomposeFlatCodeString('def main\n  do_work\nend')['snippet']).toBe('do_work');
+        expect(decomposeFlatCodeString('main() {\n  do_work\n}')['snippet']).toBe('do_work');
+        expect(decomposeFlatCodeString('<script setup>\nconst a = 1;\nfetch("/x");\n</script>')['snippet']).toBe(
+            'fetch("/x");',
+        );
+        expect(decomposeFlatCodeString('const a = 1;\nconst b = 2;\nconst c = 3;')['snippet']).toBe(
+            'const a = 1;\nconst b = 2;\nconst c = 3;',
+        );
+    });
+
+    it('should filter scaffolding/config files and extract concise snippets from raw multi-operation SDK files', () => {
+        expect(isScaffoldingOrNonSnippetFile('Cargo.toml')).toBe(true);
+        expect(isScaffoldingOrNonSnippetFile('src/models/pet.ts')).toBe(true);
+        expect(isScaffoldingOrNonSnippetFile('.github/workflows/ci.yml')).toBe(true);
+        expect(isScaffoldingOrNonSnippetFile('tests/api.spec.ts')).toBe(true);
+        expect(isScaffoldingOrNonSnippetFile('test_client.py')).toBe(true);
+        expect(isScaffoldingOrNonSnippetFile('client/api.ts')).toBe(false);
+        expect(isScaffoldingOrNonSnippetFile('api.ts')).toBe(false);
+
+        // Short file <= 25 lines returns as-is
+        expect(extractOperationSnippetFromSdkFile('short()', 'listPets', '/pets', 'get')).toBe('short()');
+
+        // Multi-line SDK file (> 25 lines) with matching operationId and fallback route/method match
+        const longSdkContent = [
+            '// SDK Client Header',
+            ...Array.from({ length: 15 }, (_, i) => `// line ${i}`),
+            'export async function list_pets(limit: number) {',
+            '    const res = await fetch("/pets");',
+            '    return res.json();',
+            '}',
+            ...Array.from({ length: 10 }, (_, i) => `// spacer ${i}`),
+            'export async function handleOrdersRoute() {',
+            '    const method = "POST";',
+            '    return fetch("/orders", { method });',
+            '}',
+        ].join('\n');
+
+        const byOpId = extractOperationSnippetFromSdkFile(longSdkContent, 'listPets', '/pets', 'get');
+        expect(byOpId).toContain('export async function list_pets');
+        expect(byOpId).not.toContain('handleOrdersRoute');
+
+        const byRoute = extractOperationSnippetFromSdkFile(longSdkContent, 'nonExistentOp', '/orders', 'post');
+        expect(byRoute).toContain('export async function handleOrdersRoute');
+
+        const routeWrongMethod = extractOperationSnippetFromSdkFile(
+            longSdkContent,
+            'nonExistentOp',
+            '/orders',
+            'delete',
+        );
+        expect(routeWrongMethod).toBeNull();
+
+        const noMatch = extractOperationSnippetFromSdkFile(longSdkContent, undefined, '/missing', 'delete');
+        expect(noMatch).toBeNull();
+
+        // Verify mapSdkExamples filters Cargo.toml and extracts snippets from raw SDK files
+        const specDoc = normalizeSpec(
+            JSON.stringify({
+                openapi: '3.2.0',
+                info: { title: 'SDK Slice API', version: '1.0.0' },
+                paths: {
+                    '/pets': {
+                        get: { operationId: 'listPets', responses: {} },
+                    },
+                    '/orders': {
+                        post: { operationId: 'createOrder', responses: {} },
+                    },
+                },
+            }),
+        );
+
+        mapSdkExamples(specDoc, [
+            { language: 'rust', filepath: 'Cargo.toml', content: '[package]\nname = "sdk"' },
+            { language: 'ts', filepath: 'src/listPets.ts', content: longSdkContent },
+            {
+                language: 'ts',
+                filepath: 'src/listPets_unsliced.ts',
+                content: Array.from({ length: 30 }, () => '// comment').join('\n'),
+            },
+            { language: 'ts', filepath: 'src/sdk_client.ts', content: longSdkContent },
+            { language: 'ts', filepath: 'src/sdk_client_second.ts', content: longSdkContent },
+            {
+                language: 'ts',
+                filepath: 'src/unrelated_long.ts',
+                content: Array.from({ length: 30 }, () => '// comment').join('\n'),
+            },
+        ]);
+
+        expect(specDoc.codeExamples['listPets']?.[0]?.content).toContain('export async function list_pets');
+        expect(specDoc.codeExamples['createOrder']?.[0]?.content).toContain('export async function handleOrdersRoute');
     });
 });

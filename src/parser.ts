@@ -448,6 +448,31 @@ export interface CodeExampleMetadata {
 }
 
 /**
+ * Removes common leading whitespace from every non-empty line of a multi-line code snippet.
+ * @param text The raw code string.
+ * @returns The dedented and trimmed code string.
+ */
+export function dedentCodeString(text: string): string {
+    const lines = text.replace(/\r\n/g, '\n').split('\n');
+    while (lines.length > 0 && !lines.slice(0, 1).join('').trim()) {
+        lines.shift();
+    }
+    while (lines.length > 0 && !lines.slice(-1).join('').trim()) {
+        lines.pop();
+    }
+    if (lines.length === 0) return '';
+    const nonEmptyLines = lines.filter(l => l.trim().length > 0);
+    const minIndent = nonEmptyLines.reduce((min, l) => {
+        const trimmedLen = l.trimStart().length;
+        return Math.min(min, l.length - trimmedLen);
+    }, Infinity);
+    return lines
+        .map(l => (l.trim().length > 0 ? l.slice(minIndent) : ''))
+        .join('\n')
+        .trim();
+}
+
+/**
  * Reconstructs a single code string from a structured code snippet object (`imports`, `wrapperStart` / `wrapper_start`, `snippet` / `code`, `wrapperEnd` / `wrapper_end`),
  * optionally filtering whether imports or wrapper lines are included.
  * @param codeRec The structured code record.
@@ -471,7 +496,9 @@ export function assembleStructuredCodeSnippet(
 
     if (includeImports && typeof imports === 'string' && imports.trim()) parts.push(imports.trim());
     if (includeWrapping && typeof wrapperStart === 'string' && wrapperStart.trim()) parts.push(wrapperStart.trim());
-    if (typeof snippet === 'string' && snippet.trim()) parts.push(snippet.trim());
+    if (typeof snippet === 'string' && snippet.trim()) {
+        parts.push(includeWrapping ? snippet.replace(/^\r?\n+|\s+$/g, '') : dedentCodeString(snippet));
+    }
     if (includeWrapping && typeof wrapperEnd === 'string' && wrapperEnd.trim()) parts.push(wrapperEnd.trim());
 
     return parts.join('\n');
@@ -587,29 +614,87 @@ export function extractExamplesFromCddOutputRecord(rec: Record<string, unknown>,
         }
     };
 
+    const extractOperationArray = (ops: unknown[], isWebhook: boolean): void => {
+        for (const opVal of ops) {
+            if (!isRecord(opVal)) continue;
+            const opPath = typeof opVal['path'] === 'string' ? opVal['path'] : '';
+            const opMethod = typeof opVal['method'] === 'string' ? opVal['method'] : '';
+            const opId = typeof opVal['operationId'] === 'string' ? opVal['operationId'] : '';
+            const codeField = opVal['code'] ?? opVal;
+            if (opMethod.toUpperCase() === 'WORKFLOW' || opPath.startsWith('/workflows/')) {
+                const wfId = opId || opPath.replace(/^\/workflows\//, '') || 'workflow';
+                out.push(...expandStringOrRecord(codeField, `workflow_${wfId}`, { workflowId: wfId }));
+            } else if (isWebhook) {
+                const whName =
+                    typeof opVal['webhookName'] === 'string'
+                        ? opVal['webhookName']
+                        : opPath.replace(/^\/+/, '') || opId;
+                const filepath = `webhook_${whName.replace(/[^a-zA-Z0-9]/g, '_')}_${opMethod.toLowerCase()}`;
+                out.push(
+                    ...expandStringOrRecord(codeField, filepath, {
+                        operationId: opId || undefined,
+                        webhookName: whName || undefined,
+                        method: opMethod.toLowerCase() || undefined,
+                    }),
+                );
+            } else {
+                const filepath = `${opPath.replace(/[^a-zA-Z0-9]/g, '_')}_${opMethod.toLowerCase()}`;
+                out.push(
+                    ...expandStringOrRecord(codeField, filepath, {
+                        operationId: opId || undefined,
+                        route: opPath || undefined,
+                        method: opMethod.toLowerCase() || undefined,
+                    }),
+                );
+            }
+        }
+    };
+
     if (isRecord(rec['endpoints'])) {
         extractRouteMap(rec['endpoints'], false);
     }
-    if (isRecord(rec['operations'])) {
+    if (Array.isArray(rec['operations'])) {
+        extractOperationArray(rec['operations'], false);
+    } else if (isRecord(rec['operations'])) {
         for (const [opKey, opVal] of Object.entries(rec['operations'])) {
             if (!isRecord(opVal)) continue;
             const opId = typeof opVal['operationId'] === 'string' ? opVal['operationId'] : opKey;
             const opRoute = typeof opVal['path'] === 'string' ? opVal['path'] : undefined;
-            const opMethod = typeof opVal['method'] === 'string' ? opVal['method'].toLowerCase() : undefined;
-            const filepath = `op_${opId.replace(/[^a-zA-Z0-9]/g, '_')}`;
-            const meta: CodeExampleMetadata = {
-                operationId: opId,
-                route: opRoute,
-                method: opMethod,
-            };
+            const opMethod = typeof opVal['method'] === 'string' ? opVal['method'] : undefined;
             const codeField = opVal['code'] ?? opVal;
-            out.push(...expandStringOrRecord(codeField, filepath, meta));
+            if (opMethod?.toUpperCase() === 'WORKFLOW' || opRoute?.startsWith('/workflows/')) {
+                const wfId = opId || (opRoute ? opRoute.replace(/^\/workflows\//, '') : 'workflow');
+                out.push(...expandStringOrRecord(codeField, `workflow_${wfId}`, { workflowId: wfId }));
+            } else {
+                const filepath = `op_${opId.replace(/[^a-zA-Z0-9]/g, '_')}`;
+                const meta: CodeExampleMetadata = {
+                    operationId: opId,
+                    route: opRoute,
+                    method: opMethod?.toLowerCase(),
+                };
+                out.push(...expandStringOrRecord(codeField, filepath, meta));
+            }
         }
     }
-    if (isRecord(rec['webhooks'])) {
+    if (Array.isArray(rec['webhooks'])) {
+        extractOperationArray(rec['webhooks'], true);
+    } else if (isRecord(rec['webhooks'])) {
         extractRouteMap(rec['webhooks'], true);
     }
-    if (isRecord(rec['workflows'])) {
+    if (Array.isArray(rec['workflows'])) {
+        for (const wfItem of rec['workflows']) {
+            if (!isRecord(wfItem)) continue;
+            const wfId =
+                typeof wfItem['workflowId'] === 'string'
+                    ? wfItem['workflowId']
+                    : typeof wfItem['operationId'] === 'string'
+                      ? wfItem['operationId']
+                      : '';
+            if (!wfId) continue;
+            const codeField = wfItem['code'] ?? wfItem;
+            out.push(...expandStringOrRecord(codeField, `workflow_${wfId}`, { workflowId: wfId }));
+        }
+    } else if (isRecord(rec['workflows'])) {
         for (const [wfId, snippet] of Object.entries(rec['workflows'])) {
             const filepath = `workflow_${wfId}`;
             const meta: CodeExampleMetadata = { workflowId: wfId };
@@ -1561,6 +1646,18 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
         (a, b) => b.workflow.workflowId.length - a.workflow.workflowId.length,
     );
 
+    const upsertExample = (list: CodeExample[], item: CodeExample): void => {
+        const exists = list.some(
+            ex =>
+                ex.language === item.language &&
+                ex.includeImports === item.includeImports &&
+                ex.includeWrapping === item.includeWrapping,
+        );
+        if (!exists) {
+            list.push(item);
+        }
+    };
+
     for (const file of generatedFiles) {
         if (
             !file.operationId &&
@@ -1598,7 +1695,7 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
                     docData.workflowCodeExamples = {};
                 }
                 const list = docData.workflowCodeExamples[matchedWfId] ?? [];
-                list.push(file);
+                upsertExample(list, file);
                 docData.workflowCodeExamples[matchedWfId] = list;
                 continue;
             }
@@ -1609,15 +1706,16 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
         let matchedId: string | null = null;
 
         // 0. Try explicit metadata match first
+        const targetRouteOrWh = file.webhookName || file.route;
         if (file.operationId && operationMap[file.operationId]) {
             matchedId = file.operationId;
-        } else if ((file.webhookName || file.route) && file.method) {
-            const isWh = Boolean(file.webhookName);
-            const targetRoute = file.webhookName || file.route;
+        } else if (targetRouteOrWh && file.method) {
+            const targetRoute = targetRouteOrWh.replace(/^\/+/, '');
             for (const [id, info] of operations) {
+                const normalizedInfoRoute = info.route.replace(/^\/+/, '');
                 if (
-                    info.isWebhook === isWh &&
-                    info.route === targetRoute &&
+                    (!file.webhookName || info.isWebhook) &&
+                    normalizedInfoRoute === targetRoute &&
                     info.method === file.method.toLowerCase()
                 ) {
                     matchedId = id;
@@ -1660,7 +1758,7 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
                 fileToStore = { ...file, content: sliced ?? file.content };
             }
             const list = docData.codeExamples[matchedId] ?? [];
-            list.push(fileToStore);
+            upsertExample(list, fileToStore);
             docData.codeExamples[matchedId] = list;
         } else if (file.content.split('\n').length > 1) {
             // 3. If a raw multi-operation SDK client file (e.g. `client.py`, `api.ts`) was passed from `to_sdk`,
@@ -1674,7 +1772,7 @@ export function mapSdkExamples(docData: DocData, generatedFiles: CodeExample[]):
                 );
                 if (sliced) {
                     const list = docData.codeExamples[id] ?? [];
-                    list.push({
+                    upsertExample(list, {
                         ...file,
                         content: sliced,
                         operationId: id,

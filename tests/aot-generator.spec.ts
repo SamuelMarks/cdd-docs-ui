@@ -1039,5 +1039,51 @@ paths:
         expect(frag.bodyHtml).toContain('href="#"');
         expect(frag.bodyHtml).not.toContain('javascript:alert(1)');
         expect(frag.bodyHtml).not.toContain('javascript:evil()');
+        expect(frag.stylesHtml).toContain('.cdd-lang-block { display: none; }');
+        expect(frag.stylesHtml).toContain('--cdd-display-imports: none;');
+        expect(frag.stylesHtml).toContain('--cdd-display-wrapping: none;');
+
+        // Verify activeLanguage selection and defaultIncludeImports / defaultIncludeWrapping = true
+        const multiLangExamples: CodeExample[] = [
+            { language: 'c', filepath: 'op.c', content: 'api_call();' },
+            { language: 'cpp', filepath: 'op.cpp', content: 'client.call();' },
+        ];
+        const fragActiveLang = generateAOTBodyAndStyles(
+            serverOverrideYaml,
+            multiLangExamples,
+            'light',
+            {},
+            undefined,
+            'cpp',
+            true,
+            true,
+        );
+        expect(fragActiveLang.bodyHtml).toContain(
+            '<input type="radio" id="lang-opt-c" name="global-lang" class="cdd-visually-hidden" >',
+        );
+        expect(fragActiveLang.bodyHtml).toContain(
+            '<input type="radio" id="lang-opt-cpp" name="global-lang" class="cdd-visually-hidden" checked>',
+        );
+        expect(fragActiveLang.bodyHtml).toContain(
+            '<input type="checkbox" id="opt-imports" class="cdd-visually-hidden" checked>',
+        );
+        expect(fragActiveLang.bodyHtml).toContain(
+            '<input type="checkbox" id="opt-wrapping" class="cdd-visually-hidden" checked>',
+        );
+        expect(fragActiveLang.stylesHtml).toContain('--cdd-display-imports: block;');
+        expect(fragActiveLang.stylesHtml).toContain('--cdd-display-wrapping: block;');
+
+        const fullHtmlWithActive = generateAOTHtml(
+            serverOverrideYaml,
+            multiLangExamples,
+            'light',
+            false,
+            {},
+            undefined,
+            'unknown-lang',
+        );
+        expect(fullHtmlWithActive).toContain(
+            '<input type="radio" id="lang-opt-c" name="global-lang" class="cdd-visually-hidden" checked>',
+        );
     });
 });

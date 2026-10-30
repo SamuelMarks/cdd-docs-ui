@@ -10,6 +10,7 @@ import {
     isRecord,
     isSpecUrl,
     normalizeSpecUrl,
+    dedentCodeString,
     expandStructuredCodeVariants,
     extractExamplesFromCddOutputRecord,
     decomposeFlatCodeString,
@@ -1128,6 +1129,99 @@ describe('OpenAPI 3.2.0 extensions & path item details', () => {
         expect(extracted.some(e => e.workflowId === 'wf1')).toBe(true);
         expect(extracted.filter(e => e.workflowId === 'wf2')).toHaveLength(4);
 
+        // Test dedentCodeString and array-shaped operations, webhooks, workflows (cdd-cpp, cdd-csharp, cdd-go, cdd-swift)
+        expect(dedentCodeString('\n  \n')).toBe('');
+        expect(dedentCodeString('    int a = 1;\n\n    int b = 2;\n')).toBe('int a = 1;\n\nint b = 2;');
+
+        const arrayExtracted = extractExamplesFromCddOutputRecord(
+            {
+                operations: [
+                    'not-a-record',
+                    {
+                        method: 'GET',
+                        path: '/pets',
+                        operationId: 'listPets',
+                        code: {
+                            imports: '#include "client.hpp"',
+                            wrapper_start: 'int main() {',
+                            snippet: '    client.list_pets();\n\n    return 0;',
+                            wrapper_end: '}',
+                        },
+                    },
+                    {
+                        method: '',
+                        path: '',
+                        operationId: '',
+                        code: 'bareOp()',
+                    },
+                    {
+                        method: 'WORKFLOW',
+                        path: '',
+                        operationId: '',
+                        code: 'fallbackWf()',
+                    },
+                ],
+                webhooks: [
+                    'not-a-record',
+                    {
+                        method: 'POST',
+                        path: '/newPet',
+                        operationId: 'onNewPet',
+                        webhookName: 'newPet',
+                        code: 'handleNewPet();',
+                    },
+                    {
+                        method: '',
+                        path: '',
+                        operationId: '',
+                        code: 'anonWebhook();',
+                    },
+                ],
+                workflows: [
+                    'not-a-record',
+                    { workflowId: 'arrWf1', code: 'runArrWf1();' },
+                    { operationId: 'arrWf2', snippet: 'runArrWf2();' },
+                    { code: 'missingWfId();' },
+                ],
+            },
+            'cpp',
+        );
+        expect(
+            arrayExtracted.find(
+                e => e.operationId === 'listPets' && !e.includeImports && !e.includeWrapping,
+            )?.content,
+        ).toBe('client.list_pets();\n\nreturn 0;');
+        expect(arrayExtracted.some(e => e.workflowId === 'workflow')).toBe(true);
+        expect(arrayExtracted.some(e => e.webhookName === 'newPet' && e.method === 'post')).toBe(true);
+        expect(arrayExtracted.some(e => e.workflowId === 'arrWf1')).toBe(true);
+        expect(arrayExtracted.some(e => e.workflowId === 'arrWf2')).toBe(true);
+
+        const recWfOps = extractExamplesFromCddOutputRecord(
+            {
+                operations: {
+                    wfByMethod: {
+                        operationId: 'wfOp1',
+                        method: 'WORKFLOW',
+                        code: 'wf1()',
+                    },
+                    wfByRoute: {
+                        operationId: '',
+                        path: '/workflows/wfRoute2',
+                        code: 'wf2()',
+                    },
+                    wfFallback: {
+                        operationId: '',
+                        method: 'WORKFLOW',
+                        code: 'wf3()',
+                    },
+                },
+            },
+            'csharp',
+        );
+        expect(recWfOps.some(e => e.workflowId === 'wfOp1')).toBe(true);
+        expect(recWfOps.some(e => e.workflowId === 'wfRoute2')).toBe(true);
+        expect(recWfOps.some(e => e.workflowId === 'workflow')).toBe(true);
+
         const overlapDoc = normalizeSpec(
             JSON.stringify({
                 openapi: '3.2.0',
@@ -1168,14 +1262,32 @@ describe('OpenAPI 3.2.0 extensions & path item details', () => {
                 webhookName: 'userHook',
                 method: 'post',
             },
+            {
+                language: 'go',
+                filepath: 'route_wh.go',
+                content: 'goWh()',
+                route: '/userHook',
+                method: 'post',
+            },
+            {
+                language: 'rust',
+                filepath: 'missing_route.rs',
+                content: 'noMatch()',
+                route: '',
+                method: 'post',
+            },
             { language: 'ts', filepath: 'explicit_wf.ts', content: 'wfOrder()', workflowId: 'order' },
+            { language: 'ts', filepath: 'explicit_wf_dup.ts', content: 'wfOrderDup()', workflowId: 'order' },
             { language: 'ts', filepath: 'workflow_orderItem.ts', content: 'wfOrderItem()' },
         ]);
 
         expect(overlapDoc.codeExamples['getUserProfile']?.[0]?.content).toBe('profile()');
+        expect(overlapDoc.codeExamples['getUserProfile']).toHaveLength(1);
         expect(overlapDoc.codeExamples['get']?.[0]?.content).toBe('users()');
         expect(overlapDoc.codeExamples['webhook-post-userHook']?.[0]?.content).toBe('wh()');
+        expect(overlapDoc.codeExamples['webhook-post-userHook']?.[1]?.content).toBe('goWh()');
         expect(overlapDoc.workflowCodeExamples?.['order']?.[0]?.content).toBe('wfOrder()');
+        expect(overlapDoc.workflowCodeExamples?.['order']).toHaveLength(1);
         expect(overlapDoc.workflowCodeExamples?.['orderItem']?.[0]?.content).toBe('wfOrderItem()');
     });
 

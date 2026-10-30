@@ -3,15 +3,27 @@
  * @module web-component
  */
 
-import { generateAOTBodyAndStyles, escapeHtml } from './aot-generator';
-import {
-    isRecord,
-    expandStructuredCodeVariants,
-    extractExamplesFromCddOutputRecord,
-    isSpecUrl,
-    normalizeSpecUrl,
-} from './parser';
+import { generateAOTBodyAndStyles, escapeHtml, sanitizeCssIdent } from './aot-generator';
+import { isRecord, extractExamplesFromCddOutputRecord, isSpecUrl, normalizeSpecUrl } from './parser';
 import { DocTranslations, defaultTranslations, CodeExample } from './types';
+
+/**
+ * Checks whether a value is a `CDDOutput` / `docs.json` block containing `endpoints`, `operations`, `workflows`, or `webhooks`.
+ * @param val The value to inspect.
+ * @returns True if the value is a record with at least one `docs.json` top-level collection.
+ */
+function isCddDocsBlock(val: unknown): val is Record<string, unknown> {
+    if (!isRecord(val)) return false;
+    return (
+        isRecord(val['endpoints']) ||
+        isRecord(val['operations']) ||
+        Array.isArray(val['operations']) ||
+        isRecord(val['workflows']) ||
+        Array.isArray(val['workflows']) ||
+        isRecord(val['webhooks']) ||
+        Array.isArray(val['webhooks'])
+    );
+}
 
 /**
  * Normalizes polymorphic SDK examples input (string, CDDOutput object, array of CDDOutput/CodeExample/docs.json)
@@ -29,13 +41,7 @@ export function normalizeSdkExamplesInput(val: unknown): CodeExample[] {
         }
     }
 
-    if (
-        isRecord(current) &&
-        (isRecord(current['endpoints']) ||
-            isRecord(current['operations']) ||
-            isRecord(current['workflows']) ||
-            isRecord(current['webhooks']))
-    ) {
+    if (isCddDocsBlock(current)) {
         current = [current];
     }
 
@@ -57,88 +63,20 @@ export function normalizeSdkExamplesInput(val: unknown): CodeExample[] {
             (itemFilepath.endsWith('.json') ||
                 itemContent.includes('"endpoints"') ||
                 itemContent.includes('"workflows"') ||
+                itemContent.includes('"webhooks"') ||
                 itemContent.includes('"operations"'))
         ) {
             try {
                 const parsed: unknown = JSON.parse(itemContent);
-                if (
-                    isRecord(parsed) &&
-                    (isRecord(parsed['endpoints']) ||
-                        isRecord(parsed['operations']) ||
-                        isRecord(parsed['workflows']) ||
-                        isRecord(parsed['webhooks']))
-                ) {
-                    extractedExamples.push(...extractExamplesFromCddOutputRecord(parsed, itemLang));
+                if (isCddDocsBlock(parsed)) {
+                    const lang = typeof parsed['language'] === 'string' ? parsed['language'] : itemLang;
+                    extractedExamples.push(...extractExamplesFromCddOutputRecord(parsed, lang));
                     continue;
-                } else if (
-                    Array.isArray(parsed) &&
-                    parsed.some(
-                        b =>
-                            isRecord(b) &&
-                            (isRecord(b['endpoints']) ||
-                                isRecord(b['operations']) ||
-                                isRecord(b['workflows']) ||
-                                isRecord(b['webhooks'])),
-                    )
-                ) {
+                } else if (Array.isArray(parsed) && parsed.some(isCddDocsBlock)) {
                     for (const block of parsed) {
-                        if (!isRecord(block)) continue;
+                        if (!isCddDocsBlock(block)) continue;
                         const lang = typeof block['language'] === 'string' ? block['language'] : itemLang;
                         extractedExamples.push(...extractExamplesFromCddOutputRecord(block, lang));
-                    }
-                    continue;
-                } else if (Array.isArray(parsed) && parsed.some(b => isRecord(b) && Array.isArray(b['operations']))) {
-                    for (const block of parsed) {
-                        if (!isRecord(block)) continue;
-                        const lang = typeof block['language'] === 'string' ? block['language'] : itemLang;
-                        const ops = Array.isArray(block['operations']) ? block['operations'] : [];
-                        for (const op of ops) {
-                            if (!isRecord(op)) continue;
-                            const opPath = typeof op['path'] === 'string' ? op['path'] : '';
-                            const opMethod = typeof op['method'] === 'string' ? op['method'] : '';
-                            const opId = typeof op['operationId'] === 'string' ? op['operationId'] : '';
-                            const codeObj = isRecord(op['code']) ? op['code'] : undefined;
-
-                            if (opMethod.toUpperCase() === 'WORKFLOW' || opPath.startsWith('/workflows/')) {
-                                const wfId = opId || opPath.replace(/^\/workflows\//, '') || 'workflow';
-                                const filepath = `workflow_${wfId}`;
-                                if (codeObj) {
-                                    extractedExamples.push(
-                                        ...expandStructuredCodeVariants(codeObj, lang, filepath, { workflowId: wfId }),
-                                    );
-                                } else {
-                                    extractedExamples.push({
-                                        language: lang,
-                                        filepath,
-                                        content: typeof op['code'] === 'string' ? op['code'] : '',
-                                        includeImports: false,
-                                        includeWrapping: false,
-                                        workflowId: wfId,
-                                    });
-                                }
-                            } else {
-                                const filepath = `${opPath.replace(/[^a-zA-Z0-9]/g, '_')}_${opMethod.toLowerCase()}`;
-                                const meta = {
-                                    operationId: opId || undefined,
-                                    route: opPath || undefined,
-                                    method: opMethod.toLowerCase() || undefined,
-                                };
-                                if (codeObj) {
-                                    extractedExamples.push(
-                                        ...expandStructuredCodeVariants(codeObj, lang, filepath, meta),
-                                    );
-                                } else {
-                                    extractedExamples.push({
-                                        language: lang,
-                                        filepath,
-                                        content: String(op['code'] || ''),
-                                        includeImports: false,
-                                        includeWrapping: false,
-                                        ...meta,
-                                    });
-                                }
-                            }
-                        }
                     }
                     continue;
                 }
@@ -147,12 +85,7 @@ export function normalizeSdkExamplesInput(val: unknown): CodeExample[] {
             }
         }
 
-        if (
-            isRecord(item['endpoints']) ||
-            isRecord(item['operations']) ||
-            isRecord(item['workflows']) ||
-            isRecord(item['webhooks'])
-        ) {
+        if (isCddDocsBlock(item)) {
             extractedExamples.push(...extractExamplesFromCddOutputRecord(item, itemLang));
             continue;
         }
@@ -600,6 +533,26 @@ export class CDDApiDocs extends HTMLElement {
     }
 
     /**
+     * Gets the currently selected active SDK language, if set.
+     * @returns The active language string or null.
+     */
+    get activeLanguage(): string | null {
+        return this.getAttribute('active-language');
+    }
+
+    /**
+     * Sets the active SDK language attribute (or removes it when null/empty).
+     * @param val The target language identifier or null.
+     */
+    set activeLanguage(val: string | null) {
+        if (val) {
+            this.setAttribute('active-language', val);
+        } else {
+            this.removeAttribute('active-language');
+        }
+    }
+
+    /**
      * Gets the current list of SDK examples.
      * @returns Array of CodeExample objects.
      */
@@ -714,6 +667,13 @@ export class CDDApiDocs extends HTMLElement {
             }
 
             const currentTheme = this.getAttribute('theme') || localStorage.getItem('cdd-theme') || 'light';
+            const checkedLangRadio = this.querySelector<HTMLInputElement>('input[name="global-lang"]:checked');
+            const existingLang = checkedLangRadio ? checkedLangRadio.id.replace(/^lang-opt-/, '') : undefined;
+            const targetActiveLang = this.getAttribute('active-language') || existingLang;
+            const existingImportsEl = this.querySelector<HTMLInputElement>('#opt-imports');
+            const existingWrappingEl = this.querySelector<HTMLInputElement>('#opt-wrapping');
+            const includeImports = existingImportsEl ? existingImportsEl.checked : false;
+            const includeWrapping = existingWrappingEl ? existingWrappingEl.checked : false;
 
             const fragment = generateAOTBodyAndStyles(
                 contentToRender,
@@ -721,6 +681,9 @@ export class CDDApiDocs extends HTMLElement {
                 currentTheme === 'dark' ? 'dark' : 'light',
                 this._translations,
                 companionContent,
+                targetActiveLang,
+                includeImports,
+                includeWrapping,
             );
 
             this.innerHTML = `${fragment.stylesHtml}\n${fragment.bodyHtml}`;
@@ -828,7 +791,7 @@ ${err instanceof Error && err.stack ? err.stack : ''}</div>`;
     }
 
     /**
-     * Handles incoming `window.postMessage` events (`UPDATE_SPEC`, `UPDATE_ARAZZO`, and `SET_THEME`).
+     * Handles incoming `window.postMessage` events (`UPDATE_SPEC`, `UPDATE_ARAZZO`, `UPDATE_SDK_EXAMPLES`, `SET_LANGUAGE`, and `SET_THEME`).
      * @param event The incoming `MessageEvent`.
      */
     private handlePostMessage(event: MessageEvent): void {
@@ -842,6 +805,10 @@ ${err instanceof Error && err.stack ? err.stack : ''}</div>`;
             void this.renderSpec(payload, companion);
         } else if (type === 'UPDATE_ARAZZO' && typeof payload === 'string') {
             this.setAttribute('arazzo-content', payload);
+        } else if (type === 'UPDATE_SDK_EXAMPLES') {
+            this.sdkExamples = payload;
+        } else if (type === 'SET_LANGUAGE' && typeof payload === 'string') {
+            this.activeLanguage = payload;
         } else if (type === 'SET_THEME' && (payload === 'dark' || payload === 'light')) {
             this.setAttribute('theme', payload);
             const themeInput = this.querySelector<HTMLInputElement>('#opt-dark-mode');
@@ -859,17 +826,24 @@ ${err instanceof Error && err.stack ? err.stack : ''}</div>`;
      * @returns Array of observed attribute names.
      */
     static get observedAttributes(): string[] {
-        return ['spec', 'spec-content', 'arazzo', 'arazzo-content', 'theme'];
+        return ['spec', 'spec-content', 'arazzo', 'arazzo-content', 'theme', 'active-language'];
     }
 
     /**
      * Called when an observed attribute is changed.
-     * @param _name The name of the attribute.
+     * @param name The name of the attribute.
      * @param oldValue The old value.
      * @param newValue The new value.
      */
-    attributeChangedCallback(_name: string, oldValue: string, newValue: string): void {
+    attributeChangedCallback(name: string, oldValue: string, newValue: string): void {
         if (oldValue !== newValue) {
+            if (name === 'active-language' && newValue) {
+                const radio = this.querySelector<HTMLInputElement>(`#lang-opt-${sanitizeCssIdent(newValue)}`);
+                if (radio) {
+                    radio.checked = true;
+                    return;
+                }
+            }
             this.triggerRender();
         }
     }

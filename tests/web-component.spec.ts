@@ -1166,6 +1166,89 @@ info:
             );
             await new Promise(r => setTimeout(r, 30));
             expect(elComp.innerHTML).toContain('pmWf');
+
+            // 4. Test activeLanguage getter/setter, attributeChangedCallback, state preservation across re-renders, and UPDATE_SDK_EXAMPLES / SET_LANGUAGE postMessages
+            expect(elComp.activeLanguage).toBeNull();
+            elComp.sdkExamples = [
+                {
+                    language: 'c',
+                    filepath: 'docs.json',
+                    content: JSON.stringify({
+                        language: 'c',
+                        endpoints: { '/pets': { get: 'api_list_pets();' } },
+                    }),
+                },
+                {
+                    language: 'cpp',
+                    filepath: 'docs.json',
+                    content: JSON.stringify([
+                        'not-a-block',
+                        {
+                            language: 'cpp',
+                            operations: [{ method: 'GET', path: '/pets', code: 'client.list_pets();' }],
+                        },
+                    ]),
+                },
+            ];
+            await new Promise(r => setTimeout(r, 30));
+
+            // Switching activeLanguage when radio #lang-opt-cpp already exists updates radio in-place
+            elComp.activeLanguage = 'cpp';
+            expect(elComp.activeLanguage).toBe('cpp');
+            expect(elComp.querySelector<HTMLInputElement>('#lang-opt-cpp')?.checked).toBe(true);
+
+            // Switching activeLanguage to a language not yet in DOM triggers render
+            elComp.activeLanguage = 'rust';
+            expect(elComp.activeLanguage).toBe('rust');
+
+            // Clearing activeLanguage removes attribute and preserves existing checked state + opt-imports / opt-wrapping on re-render
+            const impBox = elComp.querySelector<HTMLInputElement>('#opt-imports');
+            const wrapBox = elComp.querySelector<HTMLInputElement>('#opt-wrapping');
+            if (impBox) impBox.checked = true;
+            if (wrapBox) wrapBox.checked = true;
+            elComp.activeLanguage = null;
+            expect(elComp.activeLanguage).toBeNull();
+            await new Promise(r => setTimeout(r, 30));
+            expect(elComp.querySelector<HTMLInputElement>('#opt-imports')?.checked).toBe(true);
+            expect(elComp.querySelector<HTMLInputElement>('#opt-wrapping')?.checked).toBe(true);
+
+            // Re-render when no global-lang radio is checked
+            const allRadios = elComp.querySelectorAll<HTMLInputElement>('input[name="global-lang"]');
+            allRadios.forEach(r => {
+                r.checked = false;
+            });
+            await elComp.renderSpec(
+                JSON.stringify({
+                    openapi: '3.2.0',
+                    info: { title: 'Unchecked Radio Spec', version: '1.0.0' },
+                    paths: {},
+                }),
+            );
+            expect(elComp.innerHTML).toContain('Unchecked Radio Spec');
+
+            // Test UPDATE_SDK_EXAMPLES and SET_LANGUAGE via postMessage
+            window.dispatchEvent(
+                new MessageEvent('message', {
+                    data: {
+                        type: 'UPDATE_SDK_EXAMPLES',
+                        payload: [
+                            { language: 'c', filepath: 'op.c', content: 'c_call();' },
+                            { language: 'cpp', filepath: 'op.cpp', content: 'cpp_call();' },
+                        ],
+                    },
+                }),
+            );
+            await new Promise(r => setTimeout(r, 30));
+            window.dispatchEvent(
+                new MessageEvent('message', {
+                    data: {
+                        type: 'SET_LANGUAGE',
+                        payload: 'cpp',
+                    },
+                }),
+            );
+            expect(elComp.activeLanguage).toBe('cpp');
+            expect(elComp.querySelector<HTMLInputElement>('#lang-opt-cpp')?.checked).toBe(true);
         });
     });
 });

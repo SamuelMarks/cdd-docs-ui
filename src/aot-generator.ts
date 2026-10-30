@@ -784,6 +784,9 @@ export interface AOTFragmentResult {
  * @param theme UI theme (`'light'` or `'dark'`).
  * @param customTranslations Optional partial translation dictionary to override defaults.
  * @param companionArazzoContent Optional companion Arazzo 1.1.0 spec string (YAML/JSON) to render alongside an OpenAPI spec.
+ * @param activeLanguage Optional target language identifier to select by default in the SDK tab.
+ * @param defaultIncludeImports Whether `#opt-imports` is checked by default (defaults to `false` for concise SDK snippets).
+ * @param defaultIncludeWrapping Whether `#opt-wrapping` is checked by default (defaults to `false` for concise SDK snippets).
  * @returns An `AOTFragmentResult` containing `stylesHtml`, `bodyHtml`, `title`, and `locale`.
  */
 export function generateAOTBodyAndStyles(
@@ -792,6 +795,9 @@ export function generateAOTBodyAndStyles(
     theme: 'light' | 'dark' = 'light',
     customTranslations: Partial<DocTranslations> = {},
     companionArazzoContent?: string,
+    activeLanguage?: string,
+    defaultIncludeImports: boolean = false,
+    defaultIncludeWrapping: boolean = false,
 ): AOTFragmentResult {
     const t: DocTranslations = { ...defaultTranslations, ...customTranslations };
     const data = normalizeSpec(specContent, companionArazzoContent);
@@ -801,6 +807,8 @@ export function generateAOTBodyAndStyles(
 
     const languages = Array.from(new Set(sdkExamples.map(ex => ex.language)));
     if (languages.length === 0) languages.push('javascript');
+    const selectedLangIndex =
+        activeLanguage && languages.includes(activeLanguage) ? languages.indexOf(activeLanguage) : 0;
 
     const spec = data.spec;
     const baseUrl = interpolateServerVariables(spec.servers?.[0]);
@@ -1090,6 +1098,8 @@ export function generateAOTBodyAndStyles(
     
     .no-js .cdd-code-tabs .cdd-tab-content { display: block; margin-bottom: 1rem; border-top: 1px solid rgba(255,255,255,0.1); }
     .no-js .cdd-code-tabs .cdd-tab-content:before { content: "Code block: "; font-size: 0.75rem; opacity: 0.7; }
+    .no-js .cdd-lang-block { display: block; margin-bottom: 1rem; }
+    .no-js .cdd-variant-block.cdd-hide-if-imports.cdd-hide-if-wrapping { display: block; }
   </style>
   <style>
     :root, :host {
@@ -1105,9 +1115,8 @@ export function generateAOTBodyAndStyles(
       --cdd-query: #005ac1; --cdd-query-bg: #d8e2ff;
       --cdd-workflow: #6750a4; --cdd-workflow-bg: #eaddff;
       
-      ${safeLanguages.map(lang => `--cdd-display-${lang}: none;`).join(' ')}
-      --cdd-display-imports: block;
-      --cdd-display-wrapping: block;
+      --cdd-display-imports: ${defaultIncludeImports ? 'block' : 'none'};
+      --cdd-display-wrapping: ${defaultIncludeWrapping ? 'block' : 'none'};
     }
 
     #opt-dark-mode:checked ~ .cdd-layout,
@@ -1126,6 +1135,7 @@ export function generateAOTBodyAndStyles(
     .cdd-tok-variable { color: var(--cdd-tok-variable); }
     .cdd-tok-operator { color: var(--cdd-tok-operator); }
 
+    .cdd-lang-block { display: none; }
     ${safeLanguages.map(lang => `#lang-opt-${lang}:checked ~ .cdd-layout .cdd-show-if-${lang} { display: block; }`).join('\n')}
     #opt-imports:checked ~ * { --cdd-display-imports: block; }
     #opt-imports:not(:checked) ~ * { --cdd-display-imports: none; }
@@ -1263,9 +1273,9 @@ export function generateAOTBodyAndStyles(
     #opt-imports:not(:checked) ~ #opt-wrapping:not(:checked) ~ .cdd-layout .cdd-variant-block.cdd-hide-if-imports.cdd-hide-if-wrapping { display: block; }
   </style>`;
 
-    const bodyHtml = `${languages.map((lang, i) => `<input type="radio" id="lang-opt-${sanitizeCssIdent(lang)}" name="global-lang" class="cdd-visually-hidden" ${i === 0 ? 'checked' : ''}>`).join('')}
-  <input type="checkbox" id="opt-imports" class="cdd-visually-hidden" checked>
-  <input type="checkbox" id="opt-wrapping" class="cdd-visually-hidden" checked>
+    const bodyHtml = `${languages.map((lang, i) => `<input type="radio" id="lang-opt-${sanitizeCssIdent(lang)}" name="global-lang" class="cdd-visually-hidden" ${i === selectedLangIndex ? 'checked' : ''}>`).join('')}
+  <input type="checkbox" id="opt-imports" class="cdd-visually-hidden" ${defaultIncludeImports ? 'checked' : ''}>
+  <input type="checkbox" id="opt-wrapping" class="cdd-visually-hidden" ${defaultIncludeWrapping ? 'checked' : ''}>
   <input type="checkbox" id="opt-dark-mode" class="cdd-visually-hidden" ${theme === 'dark' ? 'checked' : ''}>
 
   <div class="cdd-layout">
@@ -1363,6 +1373,7 @@ export function generateAOTBodyAndStyles(
  * @param injectLiveReload Whether to inject the `/__livereload` EventSource script.
  * @param customTranslations Optional partial translation dictionary to override defaults.
  * @param companionArazzoContent Optional companion Arazzo 1.1.0 spec string (YAML/JSON) to render alongside an OpenAPI spec.
+ * @param activeLanguage Optional target language identifier to select by default in the SDK tab.
  * @returns Full HTML document string.
  */
 export function generateAOTHtml(
@@ -1372,6 +1383,7 @@ export function generateAOTHtml(
     injectLiveReload: boolean = false,
     customTranslations: Partial<DocTranslations> = {},
     companionArazzoContent?: string,
+    activeLanguage?: string,
 ): string {
     const fragment = generateAOTBodyAndStyles(
         specContent,
@@ -1379,6 +1391,7 @@ export function generateAOTHtml(
         theme,
         customTranslations,
         companionArazzoContent,
+        activeLanguage,
     );
 
     return `<!DOCTYPE html>

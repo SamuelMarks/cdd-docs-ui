@@ -1161,6 +1161,11 @@ export function generateAOTBodyAndStyles(
       color: var(--cdd-on-surface);
     }
 
+    cdd-api-docs .cdd-layout {
+      height: 100%;
+      max-height: 100%;
+    }
+
     @media (max-width: 1200px) {
       .cdd-layout { grid-template-columns: 250px 1fr; }
       .cdd-sidebar-right { display: none; }

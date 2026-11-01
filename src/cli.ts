@@ -12,7 +12,7 @@ import express from 'express';
 import { generateAOTHtml } from './aot-generator';
 import { generateAllSnippets } from './runner';
 import { normalizeSpec, isSpecUrl, normalizeSpecUrl } from './parser';
-import { CliConfig } from './types';
+import { CliConfig, DocHostTarget, SiteGenerationOptions, TopologyMode } from './types';
 
 /**
  * Monotonic counter for generating collision-free temporary specification filenames.
@@ -22,7 +22,7 @@ let tempFileCounter = 0;
 /**
  * Current CLI version matching `package.json`.
  */
-export const CLI_VERSION = '0.0.4';
+export const CLI_VERSION = '0.0.5';
 
 /**
  * Runs the CLI application using the provided command-line arguments.
@@ -37,7 +37,7 @@ export async function run(args: string[]): Promise<void> {
     }
     if (!config.inputSpec) {
         console.error(
-            'Usage: cdd-docs-cli -i <path-to-openapi-or-arazzo.yaml> [-a|--arazzo <path-to-arazzo.yaml>] [-o <output-dir>] [-t <theme>] [-w|--watch] [-p|--port <port>]',
+            'Usage: cdd-docs-cli -i <path-to-openapi-or-arazzo.yaml> [-a|--arazzo <path-to-arazzo.yaml>] [-o <output-dir>] [-t <theme>] [-w|--watch] [-p|--port <port>] [--base-href <url>] [--doc-host <official|github-pages|readthedocs|standalone>] [--github-org <org>] [--repo-name <repo>] [--topology <monorepo|polyrepo>]',
         );
         process.exit(1);
     }
@@ -46,6 +46,30 @@ export async function run(args: string[]): Promise<void> {
     if (config.watchMode) {
         await startWatchServer(config);
     }
+}
+
+/**
+ * Validates and narrows a raw CLI `--doc-host` argument to a `DocHostTarget`.
+ * @param val The raw CLI value.
+ * @returns The validated `DocHostTarget` or `undefined`.
+ */
+function parseDocHostTarget(val: string | undefined): DocHostTarget | undefined {
+    if (val === 'official' || val === 'github-pages' || val === 'readthedocs' || val === 'standalone') {
+        return val;
+    }
+    return undefined;
+}
+
+/**
+ * Validates and narrows a raw CLI `--topology` argument to a `TopologyMode`.
+ * @param val The raw CLI value.
+ * @returns The validated `TopologyMode` or `undefined`.
+ */
+function parseTopologyMode(val: string | undefined): TopologyMode | undefined {
+    if (val === 'monorepo' || val === 'polyrepo') {
+        return val;
+    }
+    return undefined;
 }
 
 /**
@@ -61,6 +85,11 @@ export function parseArgs(args: string[]): CliConfig {
     let watchMode = false;
     let port = 3000;
     let version = false;
+    let baseHref: string | undefined;
+    let docHostTarget: DocHostTarget | undefined;
+    let githubOrgName: string | undefined;
+    let repoName: string | undefined;
+    let topologyMode: TopologyMode | undefined;
 
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
@@ -85,14 +114,41 @@ export function parseArgs(args: string[]): CliConfig {
                     port = parsedPort;
                 }
             }
+        } else if (arg === '--base-href') {
+            baseHref = args[++i] || undefined;
+        } else if (arg === '--doc-host') {
+            docHostTarget = parseDocHostTarget(args[++i]);
+        } else if (arg === '--github-org') {
+            githubOrgName = args[++i] || undefined;
+        } else if (arg === '--repo-name') {
+            repoName = args[++i] || undefined;
+        } else if (arg === '--topology') {
+            topologyMode = parseTopologyMode(args[++i]);
         }
     }
-    const config: CliConfig = { inputSpec, outputDir, theme, watchMode, port, version };
-    if (arazzoSpec !== undefined) {
-        config.arazzoSpec = arazzoSpec;
-    }
+    const config: CliConfig = {
+        inputSpec,
+        outputDir,
+        theme,
+        watchMode,
+        port,
+        version,
+        ...(arazzoSpec !== undefined ? { arazzoSpec } : {}),
+        ...(baseHref !== undefined ? { baseHref } : {}),
+        ...(docHostTarget !== undefined ? { docHostTarget } : {}),
+        ...(githubOrgName !== undefined ? { githubOrgName } : {}),
+        ...(repoName !== undefined ? { repoName } : {}),
+        ...(topologyMode !== undefined ? { topologyMode } : {}),
+    };
     return config;
 }
+
+/**
+ * Alias for `parseArgs` parsing CLI arguments into a `CliConfig` (`CliOptions`) object.
+ * @param args The command line arguments to parse.
+ * @returns A `CliConfig` object containing the parsed configuration options.
+ */
+export const parseCliArgs = parseArgs;
 
 /**
  * Generates the API documentation artifacts based on the configuration.
@@ -100,7 +156,18 @@ export function parseArgs(args: string[]): CliConfig {
  * @returns A boolean indicating whether generation was successful.
  */
 export async function generate(config: CliConfig): Promise<boolean> {
-    const { inputSpec, arazzoSpec, outputDir, theme, watchMode } = config;
+    const {
+        inputSpec,
+        arazzoSpec,
+        outputDir,
+        theme,
+        watchMode,
+        baseHref,
+        docHostTarget,
+        githubOrgName,
+        repoName,
+        topologyMode,
+    } = config;
     const specPath = resolve(process.cwd(), inputSpec);
     const outPath = resolve(process.cwd(), outputDir);
     const outHtmlPath = resolve(outPath, 'index.html');
@@ -174,14 +241,34 @@ export async function generate(config: CliConfig): Promise<boolean> {
             examples.push(...arazzoExamples);
         }
 
+        const siteOptions: SiteGenerationOptions = {
+            baseHref,
+            docHostTarget,
+            githubOrgName,
+            repoName,
+            topologyMode,
+        };
+
         console.log('Compiling static HTML...');
-        const html = generateAOTHtml(specContent, examples, theme, watchMode, {}, companionArazzoContent);
+        const html = generateAOTHtml(
+            specContent,
+            examples,
+            theme,
+            watchMode,
+            {},
+            companionArazzoContent,
+            undefined,
+            siteOptions,
+        );
 
         if (!fs.existsSync(outPath)) {
             fs.mkdirSync(outPath, { recursive: true });
         }
 
         fs.writeFileSync(outHtmlPath, html);
+        if (docHostTarget === 'github-pages') {
+            fs.writeFileSync(resolve(outPath, '.nojekyll'), '');
+        }
         console.log('Successfully generated API documentation at ' + outHtmlPath);
         return true;
     } catch (err) {

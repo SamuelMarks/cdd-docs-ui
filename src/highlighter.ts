@@ -50,7 +50,10 @@ export function escapeTokenHtml(raw: string): string {
  * @returns The canonical `NormalizedSyntaxLanguage`.
  */
 export function normalizeSyntaxLanguage(language: string): NormalizedSyntaxLanguage {
-    const clean = language.trim().toLowerCase();
+    const clean = language
+        .replace(/\s*\([^)]*\)\s*$/, '')
+        .trim()
+        .toLowerCase();
     switch (clean) {
         case 'c':
             return 'c';

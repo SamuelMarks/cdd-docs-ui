@@ -21,6 +21,10 @@ import {
     formatCriterionType,
     renderWorkflowSection,
     renderArazzoComponents,
+    resolveEffectiveRepoName,
+    resolveEffectiveBaseHref,
+    resolveGithubRepoUrl,
+    generateStaticSite,
 } from '../src/aot-generator';
 import { CodeExample } from '../src/types';
 
@@ -1085,5 +1089,61 @@ paths:
         expect(fullHtmlWithActive).toContain(
             '<input type="radio" id="lang-opt-c" name="global-lang" class="cdd-visually-hidden" checked>',
         );
+
+        // SiteGenerationOptions helpers and generateStaticSite
+        expect(resolveEffectiveRepoName(undefined)).toBeUndefined();
+        expect(resolveEffectiveRepoName({})).toBeUndefined();
+        expect(resolveEffectiveRepoName({ repoName: ' custom-repo ' })).toBe('custom-repo');
+        expect(resolveEffectiveRepoName({ githubOrgName: 'my-org' })).toBe('my-org-sdk');
+        expect(resolveEffectiveRepoName({ githubOrgName: 'my-org', topologyMode: 'monorepo' })).toBe('my-org-sdk');
+        expect(resolveEffectiveRepoName({ githubOrgName: 'my-org', topologyMode: 'polyrepo' })).toBeUndefined();
+
+        expect(resolveEffectiveBaseHref(undefined)).toBeUndefined();
+        expect(resolveEffectiveBaseHref({ baseHref: ' /docs/ ' })).toBe('/docs/');
+        expect(resolveEffectiveBaseHref({ docHostTarget: 'github-pages', repoName: 'my-repo' })).toBe('/my-repo/');
+        expect(resolveEffectiveBaseHref({ docHostTarget: 'github-pages', githubOrgName: 'org' })).toBe('/org-sdk/');
+        expect(
+            resolveEffectiveBaseHref({
+                docHostTarget: 'github-pages',
+                githubOrgName: 'org',
+                topologyMode: 'polyrepo',
+            }),
+        ).toBeUndefined();
+        expect(resolveEffectiveBaseHref({ docHostTarget: 'official', repoName: 'my-repo' })).toBeUndefined();
+
+        expect(resolveGithubRepoUrl(undefined)).toBeUndefined();
+        expect(resolveGithubRepoUrl({ repoName: 'only-repo' })).toBeUndefined();
+        expect(resolveGithubRepoUrl({ githubOrgName: 'org', topologyMode: 'polyrepo' })).toBeUndefined();
+        expect(resolveGithubRepoUrl({ githubOrgName: 'org' })).toBe('https://github.com/org/org-sdk');
+        expect(resolveGithubRepoUrl({ githubOrgName: 'org', repoName: 'custom-sdk', topologyMode: 'polyrepo' })).toBe(
+            'https://github.com/org/custom-sdk',
+        );
+
+        const defaultSite = generateStaticSite(serverOverrideYaml);
+        expect(defaultSite.emitNoJekyll).toBe(false);
+        expect(defaultSite.baseHref).toBeUndefined();
+        expect(defaultSite.githubRepoUrl).toBeUndefined();
+        expect(defaultSite.html).not.toContain('<base href=');
+
+        const ghPagesSite = generateStaticSite(
+            serverOverrideYaml,
+            multiLangExamples,
+            'dark',
+            false,
+            {},
+            undefined,
+            'cpp',
+            {
+                docHostTarget: 'github-pages',
+                githubOrgName: 'SamuelMarks',
+                topologyMode: 'monorepo',
+            },
+        );
+        expect(ghPagesSite.emitNoJekyll).toBe(true);
+        expect(ghPagesSite.baseHref).toBe('/SamuelMarks-sdk/');
+        expect(ghPagesSite.githubRepoUrl).toBe('https://github.com/SamuelMarks/SamuelMarks-sdk');
+        expect(ghPagesSite.html).toContain('<base href="/SamuelMarks-sdk/">');
+        expect(ghPagesSite.html).toContain('href="https://github.com/SamuelMarks/SamuelMarks-sdk"');
+        expect(ghPagesSite.html).toContain('SamuelMarks/SamuelMarks-sdk');
     });
 });

@@ -505,23 +505,38 @@ export function assembleStructuredCodeSnippet(
 }
 
 /**
- * Expands a structured code snippet record (`imports`, `wrapperStart`, `snippet`, `wrapperEnd`) into
+ * Checks whether a structured code record directly contains snippet fields (`snippet`, `code`, `imports`, `wrapperStart`, `wrapper_start`, `wrapperEnd`, `wrapper_end`).
+ * @param rec The record to inspect.
+ * @returns True if the record represents a single structured snippet block.
+ */
+function isDirectSnippetRecord(rec: Record<string, unknown>): boolean {
+    return (
+        typeof rec['snippet'] === 'string' ||
+        typeof rec['code'] === 'string' ||
+        typeof rec['imports'] === 'string' ||
+        typeof rec['wrapperStart'] === 'string' ||
+        typeof rec['wrapper_start'] === 'string' ||
+        typeof rec['wrapperEnd'] === 'string' ||
+        typeof rec['wrapper_end'] === 'string'
+    );
+}
+
+/**
+ * Expands a single structured snippet record (`imports`, `wrapperStart`, `snippet`, `wrapperEnd`) into
  * either 4 toggleable `CodeExample` variants (when imports or wrapping fields are present) or a single
  * `CodeExample` (when only `snippet`/`code` is present).
- * @param codeRec The structured code record.
- * @param language The target programming language.
+ * @param targetRec The single structured snippet record.
+ * @param language The target programming language or variant label (e.g. `'ts'`, `'ts (angular)'`).
  * @param filepath The synthetic filepath slug.
  * @param meta Optional explicit correlation metadata (`operationId`, `method`, `route`, `webhookName`, `workflowId`).
  * @returns Array of expanded `CodeExample` items.
  */
-export function expandStructuredCodeVariants(
-    codeRec: Record<string, unknown>,
+function expandSingleStructuredBlock(
+    targetRec: Record<string, unknown>,
     language: string,
     filepath: string,
-    meta: CodeExampleMetadata = {},
+    meta: CodeExampleMetadata,
 ): CodeExample[] {
-    const targetRec =
-        typeof codeRec['default'] === 'object' && isRecord(codeRec['default']) ? codeRec['default'] : codeRec;
     const hasImports = typeof targetRec['imports'] === 'string' && targetRec['imports'].trim().length > 0;
     const wrapperStart = targetRec['wrapperStart'] ?? targetRec['wrapper_start'];
     const wrapperEnd = targetRec['wrapperEnd'] ?? targetRec['wrapper_end'];
@@ -567,6 +582,75 @@ export function expandStructuredCodeVariants(
             includeWrapping: v.includeWrapping,
             ...meta,
         });
+    }
+    return out;
+}
+
+/**
+ * Expands a structured code snippet record (`imports`, `wrapperStart`, `snippet`, `wrapperEnd`) or a
+ * multi-variant map (`{ default: {...}, angular: {...}, cli: {...}, mcp: {...} }`) into
+ * toggleable `CodeExample` variants.
+ * @param codeRec The structured code record or variant dictionary.
+ * @param language The target programming language.
+ * @param filepath The synthetic filepath slug.
+ * @param meta Optional explicit correlation metadata (`operationId`, `method`, `route`, `webhookName`, `workflowId`).
+ * @returns Array of expanded `CodeExample` items.
+ */
+export function expandStructuredCodeVariants(
+    codeRec: Record<string, unknown>,
+    language: string,
+    filepath: string,
+    meta: CodeExampleMetadata = {},
+): CodeExample[] {
+    if (isDirectSnippetRecord(codeRec)) {
+        return expandSingleStructuredBlock(codeRec, language, filepath, meta);
+    }
+
+    const reservedOperationKeys = new Set([
+        'path',
+        'method',
+        'operationId',
+        'webhookName',
+        'workflowId',
+        'summary',
+        'description',
+    ]);
+    const variantEntries = Object.entries(codeRec).filter(
+        (entry): entry is [string, string | Record<string, unknown>] =>
+            !reservedOperationKeys.has(entry[0]) && (typeof entry[1] === 'string' || isRecord(entry[1])),
+    );
+
+    if (variantEntries.length === 0) {
+        return [];
+    }
+
+    const out: CodeExample[] = [];
+    for (const [variantKey, variantVal] of variantEntries) {
+        const variantLang = variantKey === 'default' ? language : `${language} (${variantKey})`;
+        const variantFilepath = variantKey === 'default' ? filepath : `${filepath}_${variantKey}`;
+        if (typeof variantVal === 'string') {
+            if (!variantVal.trim()) {
+                out.push({
+                    language: variantLang,
+                    filepath: variantFilepath,
+                    content: variantVal,
+                    includeImports: false,
+                    includeWrapping: false,
+                    ...meta,
+                });
+            } else {
+                out.push(
+                    ...expandSingleStructuredBlock(
+                        decomposeFlatCodeString(variantVal),
+                        variantLang,
+                        variantFilepath,
+                        meta,
+                    ),
+                );
+            }
+        } else {
+            out.push(...expandSingleStructuredBlock(variantVal, variantLang, variantFilepath, meta));
+        }
     }
     return out;
 }
@@ -1471,9 +1555,188 @@ export function parseTag(obj: unknown): TagObject {
 }
 
 /**
- * Normalizes an OpenAPI 3.2.0, Swagger 2.0, or Arazzo 1.1.0 specification string (JSON or YAML)
+ * Checks whether a parsed specification record is a Google Discovery v1 JSON document.
+ * @param parsed The parsed specification record.
+ * @returns True if the document is a Google Discovery v1 rest Description.
+ */
+export function isGoogleDiscoverySpec(parsed: Record<string, unknown>): boolean {
+    return (
+        parsed['kind'] === 'discovery#restDescription' ||
+        typeof parsed['discoveryVersion'] === 'string' ||
+        (typeof parsed['rootUrl'] === 'string' && (isRecord(parsed['resources']) || isRecord(parsed['methods'])))
+    );
+}
+
+/**
+ * Recursively rewrites Google Discovery schema references (`$ref: "ModelName"`) into OpenAPI 3.2.0
+ * `#/components/schemas/ModelName` references in-place.
+ * @param node The schema or sub-schema node to transform.
+ */
+function rewriteGoogleDiscoveryRefs(node: unknown): void {
+    if (!isRecord(node)) return;
+    if (typeof node['$ref'] === 'string' && !node['$ref'].startsWith('#')) {
+        node['$ref'] = `#/components/schemas/${node['$ref']}`;
+    }
+    if (isRecord(node['properties'])) {
+        for (const prop of Object.values(node['properties'])) {
+            rewriteGoogleDiscoveryRefs(prop);
+        }
+    }
+    if (isRecord(node['items'])) {
+        rewriteGoogleDiscoveryRefs(node['items']);
+    }
+    if (isRecord(node['additionalProperties'])) {
+        rewriteGoogleDiscoveryRefs(node['additionalProperties']);
+    }
+}
+
+/**
+ * Transforms a Google Discovery v1 JSON document in-place into an OpenAPI 3.2.0 record
+ * with `openapi`, `info`, `servers`, `paths`, and `components.schemas`.
+ * @param parsed The raw Google Discovery v1 record to transform in-place.
+ */
+export function transformGoogleDiscoveryToOpenAPI3(parsed: Record<string, unknown>): void {
+    if (!isGoogleDiscoverySpec(parsed)) return;
+
+    parsed['openapi'] = '3.2.0';
+    const title =
+        typeof parsed['title'] === 'string'
+            ? parsed['title']
+            : typeof parsed['name'] === 'string'
+              ? parsed['name']
+              : 'Google Discovery API';
+    const version = typeof parsed['version'] === 'string' ? parsed['version'] : 'v1';
+    const info: Record<string, unknown> = { title, version };
+    if (typeof parsed['description'] === 'string') {
+        info['description'] = parsed['description'];
+    }
+    parsed['info'] = info;
+
+    if (typeof parsed['rootUrl'] === 'string') {
+        const rootUrl = parsed['rootUrl'].replace(/\/+$/, '');
+        const servicePath = typeof parsed['servicePath'] === 'string' ? parsed['servicePath'].replace(/^\/+/, '') : '';
+        const fullUrl = servicePath ? `${rootUrl}/${servicePath}`.replace(/\/+$/, '') : rootUrl;
+        parsed['servers'] = [{ url: fullUrl }];
+    }
+
+    const paths: Record<string, Record<string, unknown>> = {};
+
+    const collectMethods = (container: Record<string, unknown>): void => {
+        if (isRecord(container['methods'])) {
+            for (const [methodKey, methodVal] of Object.entries(container['methods'])) {
+                if (!isRecord(methodVal)) continue;
+                const rawPath =
+                    typeof methodVal['flatPath'] === 'string'
+                        ? methodVal['flatPath']
+                        : typeof methodVal['path'] === 'string'
+                          ? methodVal['path']
+                          : methodKey;
+                const route = rawPath.startsWith('/') ? rawPath : `/${rawPath}`;
+                const httpMethod =
+                    typeof methodVal['httpMethod'] === 'string' ? methodVal['httpMethod'].toLowerCase() : 'get';
+
+                const op: Record<string, unknown> = {
+                    operationId: typeof methodVal['id'] === 'string' ? methodVal['id'] : methodKey,
+                };
+                if (typeof methodVal['description'] === 'string') {
+                    op['description'] = methodVal['description'];
+                    op['summary'] = methodVal['description'];
+                }
+
+                if (isRecord(methodVal['parameters'])) {
+                    const params: Record<string, unknown>[] = [];
+                    for (const [paramName, paramDef] of Object.entries(methodVal['parameters'])) {
+                        if (!isRecord(paramDef)) continue;
+                        const location =
+                            typeof paramDef['location'] === 'string' ? paramDef['location'].toLowerCase() : 'query';
+                        const paramObj: Record<string, unknown> = {
+                            name: paramName,
+                            in: location,
+                            required: Boolean(paramDef['required']) || location === 'path',
+                            schema: {
+                                type: typeof paramDef['type'] === 'string' ? paramDef['type'] : 'string',
+                            },
+                        };
+                        if (typeof paramDef['description'] === 'string') {
+                            paramObj['description'] = paramDef['description'];
+                        }
+                        params.push(paramObj);
+                    }
+                    if (params.length > 0) {
+                        op['parameters'] = params;
+                    }
+                }
+
+                if (isRecord(methodVal['request']) && typeof methodVal['request']['$ref'] === 'string') {
+                    op['requestBody'] = {
+                        required: true,
+                        content: {
+                            'application/json': {
+                                schema: {
+                                    $ref: `#/components/schemas/${methodVal['request']['$ref']}`,
+                                },
+                            },
+                        },
+                    };
+                }
+
+                const respSchemaRef =
+                    isRecord(methodVal['response']) && typeof methodVal['response']['$ref'] === 'string'
+                        ? methodVal['response']['$ref']
+                        : undefined;
+                if (respSchemaRef) {
+                    op['responses'] = {
+                        '200': {
+                            description: 'Successful response',
+                            content: {
+                                'application/json': {
+                                    schema: {
+                                        $ref: `#/components/schemas/${respSchemaRef}`,
+                                    },
+                                },
+                            },
+                        },
+                    };
+                } else {
+                    op['responses'] = {
+                        '200': { description: 'Successful response' },
+                    };
+                }
+
+                const pathItem = paths[route] ?? {};
+                pathItem[httpMethod] = op;
+                paths[route] = pathItem;
+            }
+        }
+
+        if (isRecord(container['resources'])) {
+            for (const subRes of Object.values(container['resources'])) {
+                if (isRecord(subRes)) {
+                    collectMethods(subRes);
+                }
+            }
+        }
+    };
+
+    collectMethods(parsed);
+    parsed['paths'] = paths;
+
+    if (isRecord(parsed['schemas'])) {
+        const schemas: Record<string, unknown> = {};
+        for (const [schemaName, schemaVal] of Object.entries(parsed['schemas'])) {
+            if (isRecord(schemaVal)) {
+                rewriteGoogleDiscoveryRefs(schemaVal);
+                schemas[schemaName] = schemaVal;
+            }
+        }
+        parsed['components'] = { schemas };
+    }
+}
+
+/**
+ * Normalizes an OpenAPI 3.2.0, Swagger 2.0, Arazzo 1.1.0, or Google Discovery v1 specification string (JSON or YAML)
  * into the internal `DocData` representation.
- * @param specContent Raw OpenAPI or Arazzo spec string (YAML/JSON).
+ * @param specContent Raw OpenAPI, Swagger, Arazzo, or Google Discovery spec string (YAML/JSON).
  * @param companionArazzoContent Optional companion Arazzo 1.1.0 spec string (YAML/JSON) to link with an OpenAPI spec.
  * @returns Normalized DocData.
  * @throws {Error} If the spec format is invalid.
@@ -1518,6 +1781,7 @@ export function normalizeSpec(specContent: string, companionArazzoContent?: stri
         };
     }
 
+    transformGoogleDiscoveryToOpenAPI3(parsed);
     transformSwagger2ToOpenAPI3(parsed);
 
     const spec: OpenAPI320 = {

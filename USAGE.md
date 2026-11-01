@@ -74,7 +74,7 @@ cdd-docs-cli -i myspec.json -o build/
     - Port number for the live-reload watch server.
     - _Default:_ `3000`
 - `-v, --version`
-    - Prints the CLI version (`0.0.4`) and exits.
+    - Prints the CLI version (`0.0.5`) and exits.
 
 ## Supported Toolchain Repositories (AOT Mode)
 

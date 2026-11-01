@@ -43,6 +43,8 @@ import {
     parseLink,
     parseResponses,
     parseOperation,
+    isGoogleDiscoverySpec,
+    transformGoogleDiscoveryToOpenAPI3,
 } from '../src/parser';
 import {
     DocData,
@@ -1530,5 +1532,146 @@ describe('OpenAPI 3.2.0 extensions & path item details', () => {
 
         expect(specDoc.codeExamples['listPets']?.[0]?.content).toContain('export async function list_pets');
         expect(specDoc.codeExamples['createOrder']?.[0]?.content).toContain('export async function handleOrdersRoute');
+    });
+
+    it('should detect and transform Google Discovery v1 JSON documents and expand multi-variant snippet maps', () => {
+        expect(isGoogleDiscoverySpec({ openapi: '3.2.0' })).toBe(false);
+        expect(isGoogleDiscoverySpec({ kind: 'discovery#restDescription' })).toBe(true);
+        expect(isGoogleDiscoverySpec({ discoveryVersion: 'v1' })).toBe(true);
+        expect(isGoogleDiscoverySpec({ rootUrl: 'https://googleapis.com/', resources: {} })).toBe(true);
+        expect(isGoogleDiscoverySpec({ rootUrl: 'https://googleapis.com/', methods: {} })).toBe(true);
+
+        const nonDiscovery: Record<string, unknown> = { openapi: '3.2.0' };
+        transformGoogleDiscoveryToOpenAPI3(nonDiscovery);
+        expect(nonDiscovery['openapi']).toBe('3.2.0');
+
+        const discoveryDoc = normalizeSpec(
+            JSON.stringify({
+                kind: 'discovery#restDescription',
+                discoveryVersion: 'v1',
+                name: 'books',
+                title: 'Books API',
+                version: 'v1',
+                description: 'Google Books Discovery Service',
+                rootUrl: 'https://www.googleapis.com/',
+                servicePath: '/books/v1/',
+                methods: {
+                    invalidMethod: 'not-a-record',
+                    topLevelAction: {
+                        path: 'top/action',
+                        httpMethod: 'POST',
+                        id: 'books.topLevelAction',
+                        description: 'Top-level method',
+                        parameters: {
+                            invalidParam: 'not-a-record',
+                            q: {
+                                location: 'query',
+                                required: true,
+                                type: 'string',
+                                description: 'Search query',
+                            },
+                            id: {
+                                location: 'path',
+                            },
+                            defaultLoc: {},
+                        },
+                        request: { $ref: 'Volume' },
+                        response: { $ref: 'VolumeList' },
+                    },
+                    secondOnSameRoute: {
+                        flatPath: '/top/action',
+                        httpMethod: 'GET',
+                        parameters: {},
+                    },
+                },
+                resources: {
+                    invalidResource: 'not-a-record',
+                    volumes: {
+                        methods: {
+                            fallbackRouteMethod: {},
+                        },
+                        resources: {
+                            subVolumes: {
+                                methods: {
+                                    list: {
+                                        flatPath: 'volumes/{volumeId}/sub',
+                                        httpMethod: 'GET',
+                                        id: 'books.volumes.subVolumes.list',
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+                schemas: {
+                    invalidSchema: 'not-a-record',
+                    Volume: {
+                        type: 'object',
+                        properties: {
+                            parent: { $ref: 'Volume' },
+                            alreadyLocal: { $ref: '#/components/schemas/Volume' },
+                            primitiveProp: 'not-a-record',
+                        },
+                        items: { $ref: 'Volume' },
+                        additionalProperties: { $ref: 'Volume' },
+                    },
+                    VolumeList: {
+                        type: 'object',
+                    },
+                },
+            }),
+        );
+
+        expect(discoveryDoc.spec.info.title).toBe('Books API');
+        expect(discoveryDoc.spec.info.description).toBe('Google Books Discovery Service');
+        expect(discoveryDoc.spec.servers?.[0]?.url).toBe('https://www.googleapis.com/books/v1');
+        expect(discoveryDoc.spec.paths?.['/top/action']).toBeDefined();
+        expect(discoveryDoc.spec.paths?.['/fallbackRouteMethod']).toBeDefined();
+        expect(discoveryDoc.spec.paths?.['/volumes/{volumeId}/sub']).toBeDefined();
+        expect(discoveryDoc.spec.components?.schemas?.['Volume']).toBeDefined();
+
+        // Fallback title, version, and rootUrl without servicePath
+        const minimalDiscovery = normalizeSpec(
+            JSON.stringify({
+                discoveryVersion: 'v1',
+                name: 'drive',
+                rootUrl: 'https://www.googleapis.com/',
+            }),
+        );
+        expect(minimalDiscovery.spec.info.title).toBe('drive');
+        expect(minimalDiscovery.spec.info.version).toBe('v1');
+        expect(minimalDiscovery.spec.servers?.[0]?.url).toBe('https://www.googleapis.com');
+
+        const anonymousDiscovery = normalizeSpec(
+            JSON.stringify({
+                kind: 'discovery#restDescription',
+            }),
+        );
+        expect(anonymousDiscovery.spec.info.title).toBe('Google Discovery API');
+
+        // Multi-variant expansion (default, angular, cli, mcp, empty string, flat string)
+        const multiVariants = expandStructuredCodeVariants(
+            {
+                path: '/pets',
+                method: 'GET',
+                default: {
+                    imports: 'import { Client } from "./sdk";',
+                    snippet: 'await client.listPets();',
+                },
+                angular: {
+                    snippet: 'this.http.get("/pets");',
+                },
+                cli: 'cdd-ctl run listPets',
+                mcp: '   ',
+                emptyObj: {},
+            },
+            'ts',
+            'pets_get',
+            { operationId: 'listPets' },
+        );
+        expect(multiVariants.some(v => v.language === 'ts')).toBe(true);
+        expect(multiVariants.some(v => v.language === 'ts (angular)')).toBe(true);
+        expect(multiVariants.some(v => v.language === 'ts (cli)')).toBe(true);
+        expect(multiVariants.some(v => v.language === 'ts (mcp)' && v.content === '   ')).toBe(true);
     });
 });

@@ -5,7 +5,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { run, parseArgs, generate, startWatchServer, checkIsMainModule, bootstrapCli, CLI_VERSION } from '../src/cli';
+import {
+    run,
+    parseArgs,
+    parseCliArgs,
+    generate,
+    startWatchServer,
+    checkIsMainModule,
+    bootstrapCli,
+    CLI_VERSION,
+} from '../src/cli';
 import { normalizeSpec } from '../src/parser';
 
 /**
@@ -94,7 +103,9 @@ vi.mock('../src/aot-generator', async importOriginal => {
                 live?: boolean,
                 trans?: Partial<import('../src/types').DocTranslations>,
                 companion?: string,
-            ) => actual.generateAOTHtml(spec, ex, theme, live, trans, companion),
+                activeLang?: string,
+                siteOpts?: import('../src/types').SiteGenerationOptions,
+            ) => actual.generateAOTHtml(spec, ex, theme, live, trans, companion, activeLang, siteOpts),
         ),
     };
 });
@@ -577,5 +588,43 @@ paths: {}`,
         vi.mocked(fs.existsSync).mockReturnValue(false);
         await startWatchServer(parseArgs(['-i', 'spec.yaml', '-a', 'https://example.com/arazzo.yaml', '-w']));
         expect(fs.watch).not.toHaveBeenCalled();
+
+        // 6. Site hosting and repository topology CLI options and .nojekyll emission
+        expect(parseCliArgs).toBe(parseArgs);
+        const siteCfg = parseCliArgs([
+            '-i',
+            'spec.yaml',
+            '--base-href',
+            '/custom/',
+            '--doc-host',
+            'github-pages',
+            '--github-org',
+            'SamuelMarks',
+            '--repo-name',
+            'cdd-docs-ui',
+            '--topology',
+            'polyrepo',
+        ]);
+        expect(siteCfg.baseHref).toBe('/custom/');
+        expect(siteCfg.docHostTarget).toBe('github-pages');
+        expect(siteCfg.githubOrgName).toBe('SamuelMarks');
+        expect(siteCfg.repoName).toBe('cdd-docs-ui');
+        expect(siteCfg.topologyMode).toBe('polyrepo');
+
+        expect(parseArgs(['--doc-host', 'official']).docHostTarget).toBe('official');
+        expect(parseArgs(['--doc-host', 'readthedocs']).docHostTarget).toBe('readthedocs');
+        expect(parseArgs(['--doc-host', 'standalone']).docHostTarget).toBe('standalone');
+        expect(parseArgs(['--doc-host', 'invalid-host']).docHostTarget).toBeUndefined();
+        expect(parseArgs(['--topology', 'monorepo']).topologyMode).toBe('monorepo');
+        expect(parseArgs(['--topology', 'invalid-topo']).topologyMode).toBeUndefined();
+        expect(parseArgs(['--base-href']).baseHref).toBeUndefined();
+        expect(parseArgs(['--github-org']).githubOrgName).toBeUndefined();
+        expect(parseArgs(['--repo-name']).repoName).toBeUndefined();
+
+        vi.mocked(fs.existsSync).mockReturnValue(true);
+        vi.mocked(fs.readFileSync).mockReturnValue('openapi: 3.2.0\ninfo:\n  title: T\n  version: 1');
+        vi.mocked(fs.writeFileSync).mockClear();
+        expect(await generate(siteCfg)).toBe(true);
+        expect(fs.writeFileSync).toHaveBeenCalledWith(expect.stringContaining('.nojekyll'), '');
     });
 });

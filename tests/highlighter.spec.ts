@@ -42,6 +42,9 @@ describe('escapeTokenHtml & normalizeSyntaxLanguage', () => {
         expect(normalizeSyntaxLanguage('swift')).toBe('swift');
         expect(normalizeSyntaxLanguage('json')).toBe('json');
         expect(normalizeSyntaxLanguage('ts')).toBe('ts');
+        expect(normalizeSyntaxLanguage('ts (angular)')).toBe('ts');
+        expect(normalizeSyntaxLanguage('python (cli)')).toBe('python');
+        expect(normalizeSyntaxLanguage('rust (mcp)')).toBe('rust');
         expect(normalizeSyntaxLanguage('typescript')).toBe('ts');
         expect(normalizeSyntaxLanguage('js')).toBe('ts');
         expect(normalizeSyntaxLanguage('javascript')).toBe('ts');

@@ -22,6 +22,7 @@ import {
     SelectorObject,
     CriterionObject,
     ArazzoComponentsObject,
+    SiteGenerationOptions,
 } from './types';
 import { normalizeSpec, mapSdkExamples, isReference, getPathOperations } from './parser';
 import { isSelectorObject } from './arazzo-parser';
@@ -764,6 +765,62 @@ export function renderArazzoComponents(
 }
 
 /**
+ * Resolves the effective GitHub repository name based on `SiteGenerationOptions`.
+ * When `repoName` is not explicitly provided and `githubOrgName` is present in `monorepo` mode (or by default),
+ * defaults to `${githubOrgName}-sdk`.
+ * @param siteOptions Optional site generation options.
+ * @returns The resolved repository name, or `undefined` if neither `repoName` nor `githubOrgName` is configured.
+ */
+export function resolveEffectiveRepoName(siteOptions?: SiteGenerationOptions): string | undefined {
+    if (!siteOptions) return undefined;
+    if (siteOptions.repoName && siteOptions.repoName.trim()) {
+        return siteOptions.repoName.trim();
+    }
+    if (siteOptions.githubOrgName && siteOptions.githubOrgName.trim()) {
+        if (!siteOptions.topologyMode || siteOptions.topologyMode === 'monorepo') {
+            return `${siteOptions.githubOrgName.trim()}-sdk`;
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Resolves the effective `<base href="...">` URL or path based on `SiteGenerationOptions`.
+ * Auto-computes `/${repoName}/` when `docHostTarget === 'github-pages'` and no explicit `baseHref` is set.
+ * @param siteOptions Optional site generation options.
+ * @returns The resolved base href string, or `undefined` if none applies.
+ */
+export function resolveEffectiveBaseHref(siteOptions?: SiteGenerationOptions): string | undefined {
+    if (!siteOptions) return undefined;
+    if (siteOptions.baseHref && siteOptions.baseHref.trim()) {
+        return siteOptions.baseHref.trim();
+    }
+    if (siteOptions.docHostTarget === 'github-pages') {
+        const repo = resolveEffectiveRepoName(siteOptions);
+        if (repo) {
+            return `/${repo.replace(/^\/+|\/+$/g, '')}/`;
+        }
+    }
+    return undefined;
+}
+
+/**
+ * Resolves the GitHub repository URL (`https://github.com/${githubOrgName}/${repoName}`) when `githubOrgName` is configured.
+ * @param siteOptions Optional site generation options.
+ * @returns The full GitHub repository URL, or `undefined` if `githubOrgName` or `repoName` cannot be resolved.
+ */
+export function resolveGithubRepoUrl(siteOptions?: SiteGenerationOptions): string | undefined {
+    if (!siteOptions?.githubOrgName || !siteOptions.githubOrgName.trim()) {
+        return undefined;
+    }
+    const repo = resolveEffectiveRepoName(siteOptions);
+    if (!repo) {
+        return undefined;
+    }
+    return `https://github.com/${siteOptions.githubOrgName.trim()}/${repo}`;
+}
+
+/**
  * Structured fragment output produced by `generateAOTBodyAndStyles` for direct embedding into `<cdd-api-docs>` or wrapping into a full HTML page.
  */
 export interface AOTFragmentResult {
@@ -787,6 +844,7 @@ export interface AOTFragmentResult {
  * @param activeLanguage Optional target language identifier to select by default in the SDK tab.
  * @param defaultIncludeImports Whether `#opt-imports` is checked by default (defaults to `false` for concise SDK snippets).
  * @param defaultIncludeWrapping Whether `#opt-wrapping` is checked by default (defaults to `false` for concise SDK snippets).
+ * @param siteOptions Optional static site hosting, `<base href>`, and repository link configuration.
  * @returns An `AOTFragmentResult` containing `stylesHtml`, `bodyHtml`, `title`, and `locale`.
  */
 export function generateAOTBodyAndStyles(
@@ -798,6 +856,7 @@ export function generateAOTBodyAndStyles(
     activeLanguage?: string,
     defaultIncludeImports: boolean = false,
     defaultIncludeWrapping: boolean = false,
+    siteOptions?: SiteGenerationOptions,
 ): AOTFragmentResult {
     const t: DocTranslations = { ...defaultTranslations, ...customTranslations };
     const data = normalizeSpec(specContent, companionArazzoContent);
@@ -1278,6 +1337,13 @@ export function generateAOTBodyAndStyles(
     #opt-imports:not(:checked) ~ #opt-wrapping:not(:checked) ~ .cdd-layout .cdd-variant-block.cdd-hide-if-imports.cdd-hide-if-wrapping { display: block; }
   </style>`;
 
+    const githubRepoUrl = resolveGithubRepoUrl(siteOptions);
+    const effectiveRepoName = resolveEffectiveRepoName(siteOptions);
+    const repoBadgeHtml =
+        githubRepoUrl && effectiveRepoName && siteOptions?.githubOrgName
+            ? `<p style="font-size: 0.875rem;"><a href="${sanitizeUrl(githubRepoUrl)}" target="_blank" class="cdd-repo-badge"><span class="cdd-badge cdd-badge-meta">GitHub</span> ${escapeHtml(siteOptions.githubOrgName.trim())}/${escapeHtml(effectiveRepoName)}</a></p>`
+            : '';
+
     const bodyHtml = `${languages.map((lang, i) => `<input type="radio" id="lang-opt-${sanitizeCssIdent(lang)}" name="global-lang" class="cdd-visually-hidden" ${i === selectedLangIndex ? 'checked' : ''}>`).join('')}
   <input type="checkbox" id="opt-imports" class="cdd-visually-hidden" ${defaultIncludeImports ? 'checked' : ''}>
   <input type="checkbox" id="opt-wrapping" class="cdd-visually-hidden" ${defaultIncludeWrapping ? 'checked' : ''}>
@@ -1313,6 +1379,7 @@ export function generateAOTBodyAndStyles(
     <main class="cdd-main">
       <header>
         <h1 style="font-size: 3rem; font-weight: 300;">${escapeHtml(spec.info.title)}</h1>
+        ${repoBadgeHtml}
         <div class="cdd-description">${renderMarkdown(spec.info.description)}</div>
         ${sourceDescriptionsHtml}
         ${spec.info.termsOfService ? `<p style="font-size: 0.875rem;"><a href="${sanitizeUrl(spec.info.termsOfService)}" target="_blank">${escapeHtml(t.termsOfService)}</a></p>` : ''}
@@ -1379,6 +1446,7 @@ export function generateAOTBodyAndStyles(
  * @param customTranslations Optional partial translation dictionary to override defaults.
  * @param companionArazzoContent Optional companion Arazzo 1.1.0 spec string (YAML/JSON) to render alongside an OpenAPI spec.
  * @param activeLanguage Optional target language identifier to select by default in the SDK tab.
+ * @param siteOptions Optional static site hosting, `<base href>`, and repository link configuration.
  * @returns Full HTML document string.
  */
 export function generateAOTHtml(
@@ -1389,6 +1457,7 @@ export function generateAOTHtml(
     customTranslations: Partial<DocTranslations> = {},
     companionArazzoContent?: string,
     activeLanguage?: string,
+    siteOptions?: SiteGenerationOptions,
 ): string {
     const fragment = generateAOTBodyAndStyles(
         specContent,
@@ -1397,12 +1466,18 @@ export function generateAOTHtml(
         customTranslations,
         companionArazzoContent,
         activeLanguage,
+        false,
+        false,
+        siteOptions,
     );
+
+    const effectiveBaseHref = resolveEffectiveBaseHref(siteOptions);
+    const baseTagHtml = effectiveBaseHref ? `\n  <base href="${sanitizeUrl(effectiveBaseHref)}">` : '';
 
     return `<!DOCTYPE html>
 <html lang="${escapeHtml(fragment.locale)}" class="no-js">
 <head>
-  <script>document.documentElement.classList.remove('no-js');</script>
+  <script>document.documentElement.classList.remove('no-js');</script>${baseTagHtml}
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${escapeHtml(fragment.title)} - API Reference</title>
@@ -1429,4 +1504,58 @@ export function generateAOTHtml(
   }
 </body>
 </html>`;
+}
+
+/**
+ * Generated static site artifacts returned by `generateStaticSite`.
+ */
+export interface StaticSiteArtifacts {
+    /** Complete `index.html` content. */
+    html: string;
+    /** Whether a `.nojekyll` file should be emitted alongside `index.html`. */
+    emitNoJekyll: boolean;
+    /** Resolved `<base href="...">` value if applicable. */
+    baseHref?: string | undefined;
+    /** Resolved GitHub repository URL if applicable. */
+    githubRepoUrl?: string | undefined;
+}
+
+/**
+ * Generates static site artifacts (`index.html` and `.nojekyll` flag) for the given specification and hosting options.
+ * @param specContent Raw OpenAPI, Swagger, Arazzo, or Google Discovery spec string.
+ * @param sdkExamples List of SDK code examples.
+ * @param theme UI theme (`'light'` or `'dark'`).
+ * @param injectLiveReload Whether to inject the `/__livereload` EventSource script.
+ * @param customTranslations Optional partial translation dictionary.
+ * @param companionArazzoContent Optional companion Arazzo 1.1.0 spec string.
+ * @param activeLanguage Optional initial active SDK language.
+ * @param siteOptions Optional static site hosting, `<base href>`, and repository link configuration.
+ * @returns A `StaticSiteArtifacts` object.
+ */
+export function generateStaticSite(
+    specContent: string,
+    sdkExamples: CodeExample[] = [],
+    theme: 'light' | 'dark' = 'light',
+    injectLiveReload: boolean = false,
+    customTranslations: Partial<DocTranslations> = {},
+    companionArazzoContent?: string,
+    activeLanguage?: string,
+    siteOptions?: SiteGenerationOptions,
+): StaticSiteArtifacts {
+    const html = generateAOTHtml(
+        specContent,
+        sdkExamples,
+        theme,
+        injectLiveReload,
+        customTranslations,
+        companionArazzoContent,
+        activeLanguage,
+        siteOptions,
+    );
+    return {
+        html,
+        emitNoJekyll: siteOptions?.docHostTarget === 'github-pages',
+        baseHref: resolveEffectiveBaseHref(siteOptions),
+        githubRepoUrl: resolveGithubRepoUrl(siteOptions),
+    };
 }

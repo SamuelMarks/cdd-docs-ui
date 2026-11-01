@@ -96,9 +96,35 @@ export interface DocData {
 }
 
 /**
+ * Supported hosting target environments for generated static documentation sites.
+ */
+export type DocHostTarget = 'official' | 'github-pages' | 'readthedocs' | 'standalone';
+
+/**
+ * Supported repository topology modes for resolving GitHub SDK links.
+ */
+export type TopologyMode = 'monorepo' | 'polyrepo';
+
+/**
+ * Options for configuring static site generation (`<base href>`, `.nojekyll`, and repository header links).
+ */
+export interface SiteGenerationOptions {
+    /** Optional explicit `<base href="...">` URL or path for resolving relative assets. */
+    readonly baseHref?: string | undefined;
+    /** Target documentation host environment. */
+    readonly docHostTarget?: DocHostTarget | undefined;
+    /** GitHub organization or user name for repository badges and GitHub Pages routing. */
+    readonly githubOrgName?: string | undefined;
+    /** GitHub repository name (defaults to `${githubOrgName}-sdk` in `monorepo` mode). */
+    readonly repoName?: string | undefined;
+    /** Repository topology mode (`'monorepo'` or `'polyrepo'`). */
+    readonly topologyMode?: TopologyMode | undefined;
+}
+
+/**
  * Configuration options for the CLI runner and watch server.
  */
-export interface CliConfig {
+export interface CliConfig extends SiteGenerationOptions {
     /** Whether to print the CLI version and exit. */
     version: boolean;
     /** Path or URL to the input OpenAPI or Arazzo specification. */
@@ -114,6 +140,11 @@ export interface CliConfig {
     /** Port number for the watch server. */
     port: number;
 }
+
+/**
+ * Alias for `CliConfig` representing parsed command-line options.
+ */
+export type CliOptions = CliConfig;
 
 export * from './openapi-types';
 export * from './arazzo-types';
